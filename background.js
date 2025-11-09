@@ -1,5 +1,5 @@
 const FORM_ITEMS_ENDPOINT =
-  "https://aimsales-autoform-axabd8h9ajbuesgj.japaneast-01.azurewebsites.net/chrome_extension/form_items";
+  "https://autoform-chrome-extention-server-csasaeerewb7b9ga.japaneast-01.azurewebsites.net/chrome_extension/form_items";
 const SEND_STORAGE_KEY = "autoformSendContent";
 const DEFAULT_EMAIL = "y.abe@lassic.co.jp";
 const MAX_CURL_LOGS = 20;

@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Aimsales AutoForm",
+  "version": "0.0.1",
+  "description": "テスト用: フォームの入力欄を自動で 'test' などで埋めるだけ",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": ["activeTab", "scripting", "webNavigation", "storage", "webRequest"],
+  "host_permissions": [
+    "https://aimsales-autoform-axabd8h9ajbuesgj.japaneast-01.azurewebsites.net/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "optional_host_permissions": ["<all_urls>"],
+  "options_page": "options.html",
+  "action": {
+    "default_title": "Aimsales AutoForm",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "24": "icons/icon24.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ]
+}

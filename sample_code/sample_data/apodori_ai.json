@@ -1,0 +1,1096 @@
+[
+    {
+        "existing_data": {
+            "label": "region: \"na1\" });",
+            "form_name": "g-recaptcha-response",
+            "type": "textarea",
+            "placeholder": "",
+            "form_class_id": [
+                "g-recaptcha-response"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/div[2]/div/div/div/textarea",
+            "choices": null
+        },
+        "input_data": {
+            "value": "お世話になっております。\nソーシング・ブラザーズ株式会社の河原と申します。\n\n\n\n弊社は、IT領域に特化したM&A支援を中心に、企業の成長戦略やデジタル変革の実現を\n目的としたコンサルティングサポートを行っております。\n業界の進化と地域社会への貢献を重視し、企業間の戦略的な提携をお手伝いさせていただいております。\n\nこの度、弊社のクライアント様より、貴社の技術力や市場でのポジションがシナジーを\n創出する可能性が高いとのことで、非常に強い関心をお寄せいただいております。\n本件は\"指名案件\"として、貴社へご連絡させていただきました。\n\n【本件の目的】\nクライアント企業様は、デジタル領域でのさらなる事業拡大を目指しており、\n特に貴社のように高度な技術力と市場での信頼性を持つ企業との提携を積極的に検討しております。\n\n【貴社に興味を持たれたポイント】\n貴社が提供されるITソリューションおよびテクノロジーの革新性に注目しており、\nクライアント様の事業展開において、貴社との連携が双方の成長に大きく寄与する可能性があると考えられております。\n\n【当該企業様が想定している構想（一部抜粋させていただきます）】\nIT業界が直面する課題に対し、貴社と協力することで\n以下のような施策を推進し、さらなる事業成長を目指していきます。\n\n■ 最新技術を活用したデジタル変革の加速\n■ 業務プロセスの自動化・効率化による競争力強化\n■ クラウドやAIなど新たな技術を活用したソリューション展開\n\n\nぜひ一度、クライアント企業様のご紹介を含め、具体的なビジョンやシナジーの可能性についてお話させていただければと存じます。\n\nご返信いただけましたら、面談日時の調整をさせていただきます。\n\n\nぜひ一度、お話する機会を頂戴できれば幸いです。\nご検討のほど、よろしくお願い申し上げます。",
+            "match_condition": "内容",
+            "confidence_score": 50.0,
+            "top_3_matches": [
+                {
+                    "condition": "内容",
+                    "score": 10,
+                    "formula": "type_match 'textarea' (+5); textarea bonus (+5)"
+                }
+            ],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 お名前",
+            "form_name": "お名前",
+            "type": "text",
+            "placeholder": "例：山田太郎",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/form/label/input",
+            "choices": null
+        },
+        "input_data": {
+            "value": "河原　克典",
+            "match_condition": "名前",
+            "confidence_score": 106.67,
+            "top_3_matches": [
+                {
+                    "condition": "名前",
+                    "score": 16,
+                    "formula": "label_match '名前' (+3); label_match '名' (+3); placeholder_match '山田' (+3); placeholder_match '太郎' (+3); form_name_match '名前' (+2); form_name_match '名' (+2)"
+                }
+            ],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 会社名",
+            "form_name": "会社名",
+            "type": "text",
+            "placeholder": "例：株式会社○○○○",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/form/label[2]/input",
+            "choices": null
+        },
+        "input_data": {
+            "value": "ソーシング・ブラザーズ株式会社",
+            "match_condition": "会社名",
+            "confidence_score": 76.67,
+            "top_3_matches": [
+                {
+                    "condition": "会社名",
+                    "score": 18,
+                    "formula": "label_match '会社名' (+3); label_match '会社' (+3); placeholder_match '会社' (+3); placeholder_match '株' (+3); bonus for last keyword in label (+2); form_name_match '会社名' (+2); form_name_match '会社' (+2)"
+                },
+                {
+                    "condition": "名前",
+                    "score": 5,
+                    "formula": "label_match '名' (+3); form_name_match '名' (+2)"
+                }
+            ],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 企業URL",
+            "form_name": "企業URL",
+            "type": "text",
+            "placeholder": "例：https://sample.jp",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/form/label[3]/input",
+            "choices": null
+        },
+        "input_data": {
+            "value": "https://sbro.co.jp",
+            "match_condition": "URL",
+            "confidence_score": 86.67,
+            "top_3_matches": [
+                {
+                    "condition": "URL",
+                    "score": 13,
+                    "formula": "label_match 'URL' (+3); label_match 'url' (+3); placeholder_match 'https' (+3); form_name_match 'URL' (+2); form_name_match 'url' (+2)"
+                }
+            ],
+            "sequence_info": "1/2"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 対象サービスのURL",
+            "form_name": "対象サービスのURL",
+            "type": "text",
+            "placeholder": "例：https://sample.jp",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/form/label[4]/input",
+            "choices": null
+        },
+        "input_data": {
+            "value": "https://sbro.co.jp",
+            "match_condition": "URL",
+            "confidence_score": 86.67,
+            "top_3_matches": [
+                {
+                    "condition": "URL",
+                    "score": 13,
+                    "formula": "label_match 'URL' (+3); label_match 'url' (+3); placeholder_match 'https' (+3); form_name_match 'URL' (+2); form_name_match 'url' (+2)"
+                }
+            ],
+            "sequence_info": "2/2"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 部署",
+            "form_name": "部署",
+            "type": "dropdown",
+            "placeholder": "",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/form/label[5]/select",
+            "choices": [
+                {
+                    "value": "",
+                    "label": "▼ 選択してください"
+                },
+                {
+                    "value": "経営",
+                    "label": "経営"
+                },
+                {
+                    "value": "営業",
+                    "label": "営業"
+                },
+                {
+                    "value": "マーケティング",
+                    "label": "マーケティング"
+                },
+                {
+                    "value": "広報・PR",
+                    "label": "広報・PR"
+                },
+                {
+                    "value": "カスタマーサクセス・カスタマーサポート",
+                    "label": "カスタマーサクセス・カスタマーサポート"
+                },
+                {
+                    "value": "DX関連",
+                    "label": "DX関連"
+                },
+                {
+                    "value": "情報システム",
+                    "label": "情報システム"
+                },
+                {
+                    "value": "経営企画",
+                    "label": "経営企画"
+                },
+                {
+                    "value": "人事・総務・経理・財務・法務",
+                    "label": "人事・総務・経理・財務・法務"
+                },
+                {
+                    "value": "生産・開発・研究・設計",
+                    "label": "生産・開発・研究・設計"
+                },
+                {
+                    "value": "専門職（弁理士・税理士・医師など）",
+                    "label": "専門職（弁理士・税理士・医師など）"
+                },
+                {
+                    "value": "その他",
+                    "label": "その他"
+                }
+            ]
+        },
+        "input_data": {
+            "value": "その他",
+            "match_condition": "dropdown",
+            "confidence_score": 100,
+            "top_3_matches": [],
+            "sequence_info": "1/2"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 役職",
+            "form_name": "役職",
+            "type": "dropdown",
+            "placeholder": "",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/form/label[6]/select",
+            "choices": [
+                {
+                    "value": "",
+                    "label": "▼ 選択してください"
+                },
+                {
+                    "value": "役員・CxO",
+                    "label": "役員・CxO"
+                },
+                {
+                    "value": "部長・本部長",
+                    "label": "部長・本部長"
+                },
+                {
+                    "value": "課長・係長",
+                    "label": "課長・係長"
+                },
+                {
+                    "value": "主任・リーダー",
+                    "label": "主任・リーダー"
+                },
+                {
+                    "value": "メンバー",
+                    "label": "メンバー"
+                },
+                {
+                    "value": "その他",
+                    "label": "その他"
+                }
+            ]
+        },
+        "input_data": {
+            "value": "その他",
+            "match_condition": "dropdown",
+            "confidence_score": 100,
+            "top_3_matches": [],
+            "sequence_info": "2/2"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 会社用メールアドレス ビジネス用の個人アドレスをご記入ください。",
+            "form_name": "メールアドレス",
+            "type": "email",
+            "placeholder": "例：sample@algomatic.jp",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/form/label[7]/input",
+            "choices": null
+        },
+        "input_data": {
+            "value": "k.kawahara@sbro.co.jp",
+            "match_condition": "メールアドレス",
+            "confidence_score": 43.33,
+            "top_3_matches": [
+                {
+                    "condition": "メールアドレス",
+                    "score": 10,
+                    "formula": "type_match 'email' (+5); label_match 'メールアドレス' (+3); form_name_match 'メールアドレス' (+2)"
+                },
+                {
+                    "condition": "会社名",
+                    "score": 3,
+                    "formula": "label_match '会社' (+3)"
+                }
+            ],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 電話番号",
+            "form_name": "電話番号",
+            "type": "tel",
+            "placeholder": "例：09012345678",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/form/label[8]/input",
+            "choices": null
+        },
+        "input_data": {
+            "value": "03-6205-7938",
+            "match_condition": "電話番号",
+            "confidence_score": 80.0,
+            "top_3_matches": [
+                {
+                    "condition": "電話番号",
+                    "score": 12,
+                    "formula": "type_match 'tel' (+5); label_match '電話番号' (+3); bonus for last keyword in label (+2); form_name_match '電話番号' (+2)"
+                }
+            ],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 従業員規模（単体）",
+            "form_name": "従業員規模（単体）",
+            "type": "dropdown",
+            "placeholder": "",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/form/label[9]/select",
+            "choices": [
+                {
+                    "value": "",
+                    "label": "▼ 選択してください"
+                },
+                {
+                    "value": "50名以下",
+                    "label": "50名以下"
+                },
+                {
+                    "value": "51〜100名",
+                    "label": "51〜100名"
+                },
+                {
+                    "value": "101〜500名",
+                    "label": "101〜500名"
+                },
+                {
+                    "value": "501〜1,000名",
+                    "label": "501〜1,000名"
+                },
+                {
+                    "value": "1,001〜5,000名",
+                    "label": "1,001〜5,000名"
+                },
+                {
+                    "value": "5,001名以上",
+                    "label": "5,001名以上"
+                }
+            ]
+        },
+        "input_data": {
+            "value": "5,001名以上",
+            "match_condition": "dropdown",
+            "confidence_score": 100,
+            "top_3_matches": [],
+            "sequence_info": "1/2"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 お問い合わせの内容",
+            "form_name": "お問い合わせの内容",
+            "type": "dropdown",
+            "placeholder": "",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/form/label[10]/select",
+            "choices": [
+                {
+                    "value": "",
+                    "label": "▼ 選択してください"
+                },
+                {
+                    "value": "まずは資料だけ見たい",
+                    "label": "まずは資料だけ見たい"
+                },
+                {
+                    "value": "時期や予算は未定でありサービス紹介を希望する",
+                    "label": "時期や予算は未定でありサービス紹介を希望する"
+                },
+                {
+                    "value": "時期や予算は定まっており導入検討のため個別商談を希望する",
+                    "label": "時期や予算は定まっており導入検討のため個別商談を希望する"
+                },
+                {
+                    "value": "パートナーに関するご相談",
+                    "label": "パートナーに関するご相談"
+                },
+                {
+                    "value": "その他",
+                    "label": "その他"
+                }
+            ]
+        },
+        "input_data": {
+            "value": "時期や予算は未定でありサービス紹介を希望する",
+            "match_condition": "dropdown",
+            "confidence_score": 100,
+            "top_3_matches": [],
+            "sequence_info": "2/2"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 お問い合わせの内容（詳細） 資料請求ご希望の場合、その旨ご記載ください。",
+            "form_name": "お問い合わせの内容（詳細）",
+            "type": "textarea",
+            "placeholder": "",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/form/label[11]/textarea",
+            "choices": null
+        },
+        "input_data": {
+            "value": "お世話になっております。\nソーシング・ブラザーズ株式会社の河原と申します。\n\n\n\n弊社は、IT領域に特化したM&A支援を中心に、企業の成長戦略やデジタル変革の実現を\n目的としたコンサルティングサポートを行っております。\n業界の進化と地域社会への貢献を重視し、企業間の戦略的な提携をお手伝いさせていただいております。\n\nこの度、弊社のクライアント様より、貴社の技術力や市場でのポジションがシナジーを\n創出する可能性が高いとのことで、非常に強い関心をお寄せいただいております。\n本件は\"指名案件\"として、貴社へご連絡させていただきました。\n\n【本件の目的】\nクライアント企業様は、デジタル領域でのさらなる事業拡大を目指しており、\n特に貴社のように高度な技術力と市場での信頼性を持つ企業との提携を積極的に検討しております。\n\n【貴社に興味を持たれたポイント】\n貴社が提供されるITソリューションおよびテクノロジーの革新性に注目しており、\nクライアント様の事業展開において、貴社との連携が双方の成長に大きく寄与する可能性があると考えられております。\n\n【当該企業様が想定している構想（一部抜粋させていただきます）】\nIT業界が直面する課題に対し、貴社と協力することで\n以下のような施策を推進し、さらなる事業成長を目指していきます。\n\n■ 最新技術を活用したデジタル変革の加速\n■ 業務プロセスの自動化・効率化による競争力強化\n■ クラウドやAIなど新たな技術を活用したソリューション展開\n\n\nぜひ一度、クライアント企業様のご紹介を含め、具体的なビジョンやシナジーの可能性についてお話させていただければと存じます。\n\nご返信いただけましたら、面談日時の調整をさせていただきます。\n\n\nぜひ一度、お話する機会を頂戴できれば幸いです。\nご検討のほど、よろしくお願い申し上げます。",
+            "match_condition": "内容",
+            "confidence_score": 75.0,
+            "top_3_matches": [
+                {
+                    "condition": "内容",
+                    "score": 15,
+                    "formula": "type_match 'textarea' (+5); textarea bonus (+5); label_match '内容' (+3); form_name_match '内容' (+2)"
+                }
+            ],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 アポドリをどこで知りましたか？",
+            "form_name": "アンケート",
+            "type": "dropdown",
+            "placeholder": "",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/form/label[12]/select",
+            "choices": [
+                {
+                    "value": "",
+                    "label": "▼ 選択してください"
+                },
+                {
+                    "value": "Twitter",
+                    "label": "Twitter"
+                },
+                {
+                    "value": "Facebook",
+                    "label": "Facebook"
+                },
+                {
+                    "value": "プレスリリース",
+                    "label": "プレスリリース"
+                },
+                {
+                    "value": "Algomaticのメール",
+                    "label": "Algomaticのメール"
+                },
+                {
+                    "value": "Webメディア",
+                    "label": "Webメディア"
+                },
+                {
+                    "value": "展示会",
+                    "label": "展示会"
+                },
+                {
+                    "value": "知人や同僚の紹介",
+                    "label": "知人や同僚の紹介"
+                },
+                {
+                    "value": "YouTube・PIVOT",
+                    "label": "YouTube・PIVOT"
+                },
+                {
+                    "value": "タクシー・エレベーター広告",
+                    "label": "タクシー・エレベーター広告"
+                },
+                {
+                    "value": "その他",
+                    "label": "その他"
+                }
+            ]
+        },
+        "input_data": {
+            "value": "Algomaticのメール",
+            "match_condition": "dropdown",
+            "confidence_score": 100,
+            "top_3_matches": [],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "個人情報の取り扱いに同意する",
+            "form_name": "確認",
+            "type": "checkbox",
+            "placeholder": "",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/form/label[13]/input",
+            "value": ""
+        },
+        "input_data": {
+            "value": "selected",
+            "match_condition": "特定キーワード",
+            "confidence_score": 100,
+            "top_3_matches": [
+                {
+                    "condition": "特定キーワード",
+                    "score": 3,
+                    "formula": "Keyword match '同意' in text '個人情報の取り扱いに同意する' (+3)"
+                }
+            ],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "送信する",
+            "form_name": "",
+            "type": "button",
+            "placeholder": "",
+            "form_class_id": [
+                "button",
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[5]/form/div/button",
+            "choices": null
+        },
+        "input_data": {
+            "value": "click",
+            "match_condition": "click_button",
+            "confidence_score": 100,
+            "top_3_matches": [],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 お名前",
+            "form_name": "お名前",
+            "type": "text",
+            "placeholder": "例：山田太郎",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[6]/form/label/input",
+            "choices": null
+        },
+        "input_data": {
+            "value": "河原　克典",
+            "match_condition": "名前",
+            "confidence_score": 106.67,
+            "top_3_matches": [
+                {
+                    "condition": "名前",
+                    "score": 16,
+                    "formula": "label_match '名前' (+3); label_match '名' (+3); placeholder_match '山田' (+3); placeholder_match '太郎' (+3); form_name_match '名前' (+2); form_name_match '名' (+2)"
+                }
+            ],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 会社名",
+            "form_name": "会社名",
+            "type": "text",
+            "placeholder": "例：株式会社○○○○",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[6]/form/label[2]/input",
+            "choices": null
+        },
+        "input_data": {
+            "value": "ソーシング・ブラザーズ株式会社",
+            "match_condition": "会社名",
+            "confidence_score": 76.67,
+            "top_3_matches": [
+                {
+                    "condition": "会社名",
+                    "score": 18,
+                    "formula": "label_match '会社名' (+3); label_match '会社' (+3); placeholder_match '会社' (+3); placeholder_match '株' (+3); bonus for last keyword in label (+2); form_name_match '会社名' (+2); form_name_match '会社' (+2)"
+                },
+                {
+                    "condition": "名前",
+                    "score": 5,
+                    "formula": "label_match '名' (+3); form_name_match '名' (+2)"
+                }
+            ],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 企業URL",
+            "form_name": "企業URL",
+            "type": "text",
+            "placeholder": "例：https://sample.jp",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[6]/form/label[3]/input",
+            "choices": null
+        },
+        "input_data": {
+            "value": "https://sbro.co.jp",
+            "match_condition": "URL",
+            "confidence_score": 86.67,
+            "top_3_matches": [
+                {
+                    "condition": "URL",
+                    "score": 13,
+                    "formula": "label_match 'URL' (+3); label_match 'url' (+3); placeholder_match 'https' (+3); form_name_match 'URL' (+2); form_name_match 'url' (+2)"
+                }
+            ],
+            "sequence_info": "1/2"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 対象サービスのURL",
+            "form_name": "対象サービスのURL",
+            "type": "text",
+            "placeholder": "例：https://sample.jp",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[6]/form/label[4]/input",
+            "choices": null
+        },
+        "input_data": {
+            "value": "https://sbro.co.jp",
+            "match_condition": "URL",
+            "confidence_score": 86.67,
+            "top_3_matches": [
+                {
+                    "condition": "URL",
+                    "score": 13,
+                    "formula": "label_match 'URL' (+3); label_match 'url' (+3); placeholder_match 'https' (+3); form_name_match 'URL' (+2); form_name_match 'url' (+2)"
+                }
+            ],
+            "sequence_info": "2/2"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 部署",
+            "form_name": "部署",
+            "type": "dropdown",
+            "placeholder": "",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[6]/form/label[5]/select",
+            "choices": [
+                {
+                    "value": "",
+                    "label": "▼ 選択してください"
+                },
+                {
+                    "value": "経営",
+                    "label": "経営"
+                },
+                {
+                    "value": "営業",
+                    "label": "営業"
+                },
+                {
+                    "value": "マーケティング",
+                    "label": "マーケティング"
+                },
+                {
+                    "value": "広報・PR",
+                    "label": "広報・PR"
+                },
+                {
+                    "value": "カスタマーサクセス・カスタマーサポート",
+                    "label": "カスタマーサクセス・カスタマーサポート"
+                },
+                {
+                    "value": "DX関連",
+                    "label": "DX関連"
+                },
+                {
+                    "value": "情報システム",
+                    "label": "情報システム"
+                },
+                {
+                    "value": "経営企画",
+                    "label": "経営企画"
+                },
+                {
+                    "value": "人事・総務・経理・財務・法務",
+                    "label": "人事・総務・経理・財務・法務"
+                },
+                {
+                    "value": "生産・開発・研究・設計",
+                    "label": "生産・開発・研究・設計"
+                },
+                {
+                    "value": "専門職（弁理士・税理士・医師など）",
+                    "label": "専門職（弁理士・税理士・医師など）"
+                },
+                {
+                    "value": "その他",
+                    "label": "その他"
+                }
+            ]
+        },
+        "input_data": {
+            "value": "その他",
+            "match_condition": "dropdown",
+            "confidence_score": 100,
+            "top_3_matches": [],
+            "sequence_info": "1/2"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 役職",
+            "form_name": "役職",
+            "type": "dropdown",
+            "placeholder": "",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[6]/form/label[6]/select",
+            "choices": [
+                {
+                    "value": "",
+                    "label": "▼ 選択してください"
+                },
+                {
+                    "value": "役員・CxO",
+                    "label": "役員・CxO"
+                },
+                {
+                    "value": "部長・本部長",
+                    "label": "部長・本部長"
+                },
+                {
+                    "value": "課長・係長",
+                    "label": "課長・係長"
+                },
+                {
+                    "value": "主任・リーダー",
+                    "label": "主任・リーダー"
+                },
+                {
+                    "value": "メンバー",
+                    "label": "メンバー"
+                },
+                {
+                    "value": "その他",
+                    "label": "その他"
+                }
+            ]
+        },
+        "input_data": {
+            "value": "その他",
+            "match_condition": "dropdown",
+            "confidence_score": 100,
+            "top_3_matches": [],
+            "sequence_info": "2/2"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 会社用メールアドレス ビジネス用の個人アドレスをご記入ください。",
+            "form_name": "メールアドレス",
+            "type": "email",
+            "placeholder": "例：sample@algomatic.jp",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[6]/form/label[7]/input",
+            "choices": null
+        },
+        "input_data": {
+            "value": "k.kawahara@sbro.co.jp",
+            "match_condition": "メールアドレス",
+            "confidence_score": 43.33,
+            "top_3_matches": [
+                {
+                    "condition": "メールアドレス",
+                    "score": 10,
+                    "formula": "type_match 'email' (+5); label_match 'メールアドレス' (+3); form_name_match 'メールアドレス' (+2)"
+                },
+                {
+                    "condition": "会社名",
+                    "score": 3,
+                    "formula": "label_match '会社' (+3)"
+                }
+            ],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 電話番号",
+            "form_name": "電話番号",
+            "type": "tel",
+            "placeholder": "例：09012345678",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[6]/form/label[8]/input",
+            "choices": null
+        },
+        "input_data": {
+            "value": "03-6205-7938",
+            "match_condition": "電話番号",
+            "confidence_score": 80.0,
+            "top_3_matches": [
+                {
+                    "condition": "電話番号",
+                    "score": 12,
+                    "formula": "type_match 'tel' (+5); label_match '電話番号' (+3); bonus for last keyword in label (+2); form_name_match '電話番号' (+2)"
+                }
+            ],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 従業員規模（単体）",
+            "form_name": "従業員規模（単体）",
+            "type": "dropdown",
+            "placeholder": "",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[6]/form/label[9]/select",
+            "choices": [
+                {
+                    "value": "",
+                    "label": "▼ 選択してください"
+                },
+                {
+                    "value": "50名以下",
+                    "label": "50名以下"
+                },
+                {
+                    "value": "51〜100名",
+                    "label": "51〜100名"
+                },
+                {
+                    "value": "101〜500名",
+                    "label": "101〜500名"
+                },
+                {
+                    "value": "501〜1,000名",
+                    "label": "501〜1,000名"
+                },
+                {
+                    "value": "1,001〜5,000名",
+                    "label": "1,001〜5,000名"
+                },
+                {
+                    "value": "5,001名以上",
+                    "label": "5,001名以上"
+                }
+            ]
+        },
+        "input_data": {
+            "value": "5,001名以上",
+            "match_condition": "dropdown",
+            "confidence_score": 100,
+            "top_3_matches": [],
+            "sequence_info": "1/2"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 お問い合わせの内容",
+            "form_name": "お問い合わせの内容",
+            "type": "dropdown",
+            "placeholder": "",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[6]/form/label[10]/select",
+            "choices": [
+                {
+                    "value": "",
+                    "label": "▼ 選択してください"
+                },
+                {
+                    "value": "まずは資料だけ見たい",
+                    "label": "まずは資料だけ見たい"
+                },
+                {
+                    "value": "時期や予算は未定でありサービス紹介を希望する",
+                    "label": "時期や予算は未定でありサービス紹介を希望する"
+                },
+                {
+                    "value": "時期や予算は定まっており導入検討のため個別商談を希望する",
+                    "label": "時期や予算は定まっており導入検討のため個別商談を希望する"
+                },
+                {
+                    "value": "パートナーに関するご相談",
+                    "label": "パートナーに関するご相談"
+                },
+                {
+                    "value": "その他",
+                    "label": "その他"
+                }
+            ]
+        },
+        "input_data": {
+            "value": "時期や予算は未定でありサービス紹介を希望する",
+            "match_condition": "dropdown",
+            "confidence_score": 100,
+            "top_3_matches": [],
+            "sequence_info": "2/2"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 お問い合わせの内容（詳細） 資料請求ご希望の場合、その旨ご記載ください。",
+            "form_name": "お問い合わせの内容（詳細）",
+            "type": "textarea",
+            "placeholder": "",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[6]/form/label[11]/textarea",
+            "choices": null
+        },
+        "input_data": {
+            "value": "お世話になっております。\nソーシング・ブラザーズ株式会社の河原と申します。\n\n\n\n弊社は、IT領域に特化したM&A支援を中心に、企業の成長戦略やデジタル変革の実現を\n目的としたコンサルティングサポートを行っております。\n業界の進化と地域社会への貢献を重視し、企業間の戦略的な提携をお手伝いさせていただいております。\n\nこの度、弊社のクライアント様より、貴社の技術力や市場でのポジションがシナジーを\n創出する可能性が高いとのことで、非常に強い関心をお寄せいただいております。\n本件は\"指名案件\"として、貴社へご連絡させていただきました。\n\n【本件の目的】\nクライアント企業様は、デジタル領域でのさらなる事業拡大を目指しており、\n特に貴社のように高度な技術力と市場での信頼性を持つ企業との提携を積極的に検討しております。\n\n【貴社に興味を持たれたポイント】\n貴社が提供されるITソリューションおよびテクノロジーの革新性に注目しており、\nクライアント様の事業展開において、貴社との連携が双方の成長に大きく寄与する可能性があると考えられております。\n\n【当該企業様が想定している構想（一部抜粋させていただきます）】\nIT業界が直面する課題に対し、貴社と協力することで\n以下のような施策を推進し、さらなる事業成長を目指していきます。\n\n■ 最新技術を活用したデジタル変革の加速\n■ 業務プロセスの自動化・効率化による競争力強化\n■ クラウドやAIなど新たな技術を活用したソリューション展開\n\n\nぜひ一度、クライアント企業様のご紹介を含め、具体的なビジョンやシナジーの可能性についてお話させていただければと存じます。\n\nご返信いただけましたら、面談日時の調整をさせていただきます。\n\n\nぜひ一度、お話する機会を頂戴できれば幸いです。\nご検討のほど、よろしくお願い申し上げます。",
+            "match_condition": "内容",
+            "confidence_score": 75.0,
+            "top_3_matches": [
+                {
+                    "condition": "内容",
+                    "score": 15,
+                    "formula": "type_match 'textarea' (+5); textarea bonus (+5); label_match '内容' (+3); form_name_match '内容' (+2)"
+                }
+            ],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "必須 アポドリをどこで知りましたか？",
+            "form_name": "アンケート",
+            "type": "dropdown",
+            "placeholder": "",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[6]/form/label[12]/select",
+            "choices": [
+                {
+                    "value": "",
+                    "label": "▼ 選択してください"
+                },
+                {
+                    "value": "Twitter",
+                    "label": "Twitter"
+                },
+                {
+                    "value": "Facebook",
+                    "label": "Facebook"
+                },
+                {
+                    "value": "プレスリリース",
+                    "label": "プレスリリース"
+                },
+                {
+                    "value": "Algomaticのメール",
+                    "label": "Algomaticのメール"
+                },
+                {
+                    "value": "Webメディア",
+                    "label": "Webメディア"
+                },
+                {
+                    "value": "展示会",
+                    "label": "展示会"
+                },
+                {
+                    "value": "知人や同僚の紹介",
+                    "label": "知人や同僚の紹介"
+                },
+                {
+                    "value": "YouTube・PIVOT",
+                    "label": "YouTube・PIVOT"
+                },
+                {
+                    "value": "タクシー・エレベーター広告",
+                    "label": "タクシー・エレベーター広告"
+                },
+                {
+                    "value": "その他",
+                    "label": "その他"
+                }
+            ]
+        },
+        "input_data": {
+            "value": "Algomaticのメール",
+            "match_condition": "dropdown",
+            "confidence_score": 100,
+            "top_3_matches": [],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "個人情報の取り扱いに同意する",
+            "form_name": "確認",
+            "type": "checkbox",
+            "placeholder": "",
+            "form_class_id": [
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[6]/form/label[13]/input",
+            "value": ""
+        },
+        "input_data": {
+            "value": "selected",
+            "match_condition": "特定キーワード",
+            "confidence_score": 100,
+            "top_3_matches": [
+                {
+                    "condition": "特定キーワード",
+                    "score": 3,
+                    "formula": "Keyword match '同意' in text '個人情報の取り扱いに同意する' (+3)"
+                }
+            ],
+            "sequence_info": "1/1"
+        }
+    },
+    {
+        "existing_data": {
+            "label": "送信する",
+            "form_name": "",
+            "type": "button",
+            "placeholder": "",
+            "form_class_id": [
+                "button",
+                "sd",
+                "appear"
+            ],
+            "xpath": "/html/body/div/div/div/div[3]/div[2]/div/section[12]/div/div[6]/form/div/button",
+            "choices": null
+        },
+        "input_data": {
+            "value": "click",
+            "match_condition": "click_button",
+            "confidence_score": 100,
+            "top_3_matches": [],
+            "sequence_info": "1/1"
+        }
+    }
+]
