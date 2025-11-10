@@ -53,6 +53,19 @@
         },
         "extension_user_info"
       );
+      return;
+    }
+
+    if (data.type === "autoform_share_browser_env") {
+      try {
+        chrome.runtime.sendMessage({
+          type: "autoform_page_env_report",
+          payload: data.payload || null,
+          pageUrl: typeof data.href === "string" ? data.href : null
+        });
+      } catch (err) {
+        console.warn("[AutoForm] failed to relay browser env", err);
+      }
     }
   });
 })();

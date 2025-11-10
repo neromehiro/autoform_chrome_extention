@@ -30,27 +30,80 @@
       a:hover {
         text-decoration: underline;
       }
-      .app-header {
+      .hero-card {
         display: flex;
-        gap: 14px;
-        align-items: center;
-        padding: 16px;
-        border-radius: 18px;
-        background: #ffffff;
-        box-shadow: 0 18px 30px rgba(15, 23, 42, 0.12);
-        margin-bottom: 18px;
+        flex-direction: column;
+        gap: 12px;
       }
-      .app-header img {
-        width: 60px;
-        height: 60px;
+      .hero-header {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        width: 100%;
+      }
+      .hero-info {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .hero-title {
+        font-size: 16px;
+        font-weight: 700;
+        margin: 0;
+        color: #0f172a;
+      }
+      .hero-subtitle {
+        margin: 0;
+        font-size: 12px;
+        color: #475569;
+      }
+      .hero-status {
+        margin: 0;
+        font-size: 11px;
+        color: #64748b;
+      }
+      .plan-status {
+        font-weight: 700;
+        color: #dc2626;
+      }
+      .plan-status.plan-status-paid {
+        color: #059669;
+      }
+      .plan-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        background: rgba(248, 113, 113, 0.15);
+        color: #dc2626;
+        width: fit-content;
+      }
+      .plan-badge.plan-badge-paid {
+        background: rgba(16, 185, 129, 0.15);
+        color: #047857;
+      }
+      .hero-icon {
+        width: 56px;
+        height: 56px;
         border-radius: 14px;
         object-fit: cover;
         box-shadow: 0 18px 26px rgba(79, 70, 229, 0.3);
+        flex-shrink: 0;
       }
-      .app-header .tagline {
-        margin: 6px 0 0;
-        font-size: 12px;
-        color: #64748b;
+      .hero-divider {
+        height: 1px;
+        background: rgba(148, 163, 184, 0.35);
+        margin: 4px 0;
+      }
+      .hero-footer {
+        display: flex;
+        align-items: center;
+        gap: 12px;
       }
       .surface-card {
         background: #ffffff;
@@ -161,16 +214,22 @@
       .ios-switch input:checked + .ios-slider::after {
         transform: translateX(28px);
       }
+      .hero-switch {
+        margin-left: auto;
+        flex-shrink: 0;
+      }
       .status-text {
         margin: 10px 0 0;
         font-size: 12px;
         color: #64748b;
       }
       .detection-note {
-        margin: 8px 0 0;
+        margin: 0;
         font-size: 13px;
         font-weight: 600;
         color: #0f172a;
+        flex: 1 1 auto;
+        min-width: 0;
       }
       .detection-note.error {
         color: #dc2626;
@@ -253,101 +312,96 @@
         color: #475569;
         font-size: 13px;
       }
-      #curl-details,
-      #curl-confirm-details,
-      #api-details,
-      #user-info-details {
+      .analysis-log,
+      .detail-status,
+      .analysis-actions,
+      .analysis-copy-feedback {
         display: none;
-        margin: 10px 0 0;
-        padding: 12px;
-        background: #0f172a;
-        color: #e2e8f0;
-        border-radius: 12px;
-        font-size: 11px;
-        line-height: 1.4;
-        max-height: 180px;
-        overflow: auto;
-        border: 1px solid rgba(148, 163, 184, 0.25);
       }
-      .analysis-log {
-        margin: 10px 0 0;
-        padding: 12px;
-        background: #0f172a;
-        color: #e2e8f0;
-        border-radius: 12px;
-        font-size: 11px;
-        line-height: 1.4;
-        max-height: 220px;
-        overflow: auto;
-        border: 1px solid rgba(148, 163, 184, 0.25);
-        white-space: pre-wrap;
-      }
-      .detail-status {
-        display: block;
-        margin: -6px 0 4px;
-        font-size: 11px;
-        color: #94a3b8;
-      }
-      .detail-status.has-data {
-        color: #059669;
-        font-weight: 600;
-      }
-      .detail-status.error {
-        color: #dc2626;
-      }
-      .ghost-btn.data-available {
-        border-color: rgba(16, 185, 129, 0.5);
-        background: rgba(16, 185, 129, 0.1);
-        color: #065f46;
-      }
-      .analysis-actions {
+      .api-key-card {
+        margin-top: 8px;
+        padding-top: 10px;
+        border-top: 1px solid rgba(148, 163, 184, 0.2);
         display: flex;
         flex-direction: column;
-        gap: 6px;
-        margin-top: 10px;
+        gap: 10px;
       }
-      .analysis-copy-feedback {
-        font-size: 11px;
-        color: #059669;
-        display: none;
+      .api-key-input {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font-size: 13px;
+      }
+      .api-key-input:focus {
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+        outline: none;
+      }
+      .api-key-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .api-key-actions a {
+        font-size: 12px;
+        color: #2563eb;
+        text-decoration: underline;
       }
     </style>
   </head>
   <body>
-    <div class="surface-card settings-card master-control-card">
-      <div class="master-toggle-container">
-        <div>
-          <p class="master-toggle-title">Aimsales AutoForm</p>
-          <p class="master-toggle-desc" id="master-toggle-status-text">拡張機能は有効です</p>
-          <p class="detection-note" id="input-count">入力欄を検知中です…</p>
+    <div class="surface-card master-control-card hero-card">
+      <div class="hero-header">
+        <img src="aimsales_logo.png" alt="AimSales" class="hero-icon" />
+        <div class="hero-info">
+          <p class="hero-title">AutoForm by Aimsales</p>
+          <p class="hero-subtitle">最も優れたAIフォーム入力支援ツール</p>
+          <span id="plan-badge" class="plan-badge">無料版</span>
         </div>
-        <label class="ios-switch">
+      </div>
+      <div class="hero-divider"></div>
+      <div class="hero-footer">
+        <p class="detection-note" id="input-count">入力欄を検知中です…</p>
+        <label class="ios-switch hero-switch">
           <input type="checkbox" id="extension-master-toggle" aria-label="拡張機能のON/OFF" />
           <span class="ios-slider" aria-hidden="true"></span>
         </label>
       </div>
-    </div>
-
-    <div class="app-header">
-      <img src="aimsales_logo.png" alt="AimSales" />
-      <div>
-        <h1>Aimsales AutoForm</h1>
-        <p class="tagline">Smart autofill for modern sales ops</p>
-      </div>
-    </div>
-
-    <div class="surface-card">
-      <p class="promo-text">
-        <strong>【有料プランのご案内】</strong><br />
-        Aimsalesでは生成AIによる高品質な文章でフォーム営業が可能(返信率80倍以上⤴️)<br />
-        さらに500万社以上の企業データにより、メール営業、フォーム一括営業など可能。詳しくはこちら →
-        <a href="https://aimsales.jp/" target="_blank" rel="noreferrer noopener">https://aimsales.jp/</a> 。
+      <p class="hero-status" id="master-toggle-status-text">
+        拡張機能は有効です（<span id="plan-status" class="plan-status">無料版</span>）
       </p>
     </div>
 
     <div class="surface-card">
       <button id="fill-now" class="primary-btn">入力を実行</button>
       <p id="manual-status" class="status-text">未実行</p>
+    </div>
+
+    <div class="surface-card">
+      <p class="promo-text">
+        <strong>【無料版の制限】</strong><br />
+        共有サーバーでの処理を行っております。<br />
+        なので処理に時間がかかる場合がございます。<br />
+        Aimsalesユーザーだと、強力な専用サーバーで処理されるので5秒程度かかっていたフォーム入力が常に1秒以内で完了します。<br />
+        Aimsalesのお申し込みはこちら。
+        <a href="https://forms.gle/FWkuxr8HenuLkARC7" target="_blank" rel="noreferrer noopener">
+          https://forms.gle/FWkuxr8HenuLkARC7
+        </a>
+      </p>
+    </div>
+
+    <div class="surface-card">
+      <p class="promo-text">
+        <strong>【Aimsalesとは】</strong><br />
+        Aimsalesでは生成AIによる高品質な文章でフォーム営業が可能(返信率80倍以上⤴️)<br />
+        さらに500万社以上の企業データにより、メール営業、フォーム一括営業など可能。詳しくはこちら →
+        <a href="https://aimsales.jp/" target="_blank" rel="noreferrer noopener">https://aimsales.jp/</a> 。<br />
+        お申し込みはこちらから。
+        <a href="https://forms.gle/FWkuxr8HenuLkARC7" target="_blank" rel="noreferrer noopener">
+          https://forms.gle/FWkuxr8HenuLkARC7
+        </a>
+      </p>
     </div>
 
     <div class="surface-card" id="input-config-card">
@@ -441,25 +495,21 @@
           <input type="checkbox" id="show-floating-button" data-master-controlled />
           画面右下に、常にボタンを表示する
         </label>
-        <button id="show-curl-details" class="ghost-btn" data-master-controlled>curl詳細</button>
-        <span id="curl-details-status" class="detail-status">データ未検知</span>
-        <pre id="curl-details"></pre>
-        <button id="show-api-details" class="ghost-btn" data-master-controlled>レスポンス詳細</button>
-        <span id="api-details-status" class="detail-status">未取得</span>
-        <pre id="api-details"></pre>
-        <button id="reset-detail-history" class="ghost-btn" data-master-controlled>
-          詳細をリセット
-        </button>
-        <button id="show-user-info-details" class="ghost-btn" data-master-controlled>ユーザー情報詳細</button>
-        <span id="user-info-details-status" class="detail-status">未取得</span>
-        <pre id="user-info-details"></pre>
-        <span class="section-label" style="margin-top:16px;">解析用データ</span>
-        <span id="analysis-data-status" class="detail-status">データ未検知</span>
-        <pre id="analysis-data" class="analysis-log">まだデータがありません</pre>
-        <div class="analysis-actions">
-          <button id="copy-analysis-data" class="ghost-btn" data-master-controlled>解析ログをコピー</button>
-          <span id="analysis-copy-feedback" class="analysis-copy-feedback">コピーしました</span>
+      </div>
+      <div class="api-key-card">
+        <label class="send-field-label" for="api-key-input">APIキー</label>
+        <input
+          type="text"
+          id="api-key-input"
+          class="api-key-input"
+          placeholder="Aimsalesから発行されたAPIキーを入力"
+          autocomplete="off"
+        />
+        <div class="api-key-actions">
+          <button id="save-api-key" class="ghost-btn" type="button">APIキーを保存</button>
+          <a href="https://forms.gle/FWkuxr8HenuLkARC7" target="_blank" rel="noreferrer noopener">APIキーを取得する</a>
         </div>
+        <p id="api-key-status" class="status-text">APIキーが未設定です</p>
       </div>
     </div>
 

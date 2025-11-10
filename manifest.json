@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Aimsales AutoForm",
   "version": "0.0.1",
-  "description": "テスト用: フォームの入力欄を自動で 'test' などで埋めるだけ",
+  "description": "Aimsales AutoForm はフォーム検証用に text/textarea/email/tel/url へ定型値を一括投入し、JSON インポートした XPath 命令も各フレームへ配信する Chrome 拡張です。",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -15,6 +15,7 @@
     "webNavigation",
     "storage",
     "webRequest",
+    "debugger",
     "system.cpu",
     "system.memory",
     "system.display",
@@ -34,7 +35,7 @@
   "optional_host_permissions": ["<all_urls>"],
   "options_page": "options.html",
   "action": {
-    "default_title": "Aimsales AutoForm",
+    "default_title": "Aimsales AutoForm: Auto-fill & JSON Runner",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",

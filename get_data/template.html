@@ -69,6 +69,22 @@
         indexed: !!window.indexedDB
       }
     };
+
+    const sharePayloadWithExtension = (data) => {
+      try {
+        const clone = JSON.parse(JSON.stringify(data));
+        window.postMessage(
+          {
+            type: "autoform_share_browser_env",
+            payload: clone,
+            href: location.href
+          },
+          "*"
+        );
+      } catch (err) {
+        console.warn("[DEBUG] Failed to share browser env with extension", err);
+      }
+    };
   
     const tasks = [];
     const battSupported = typeof navigator.getBattery === 'function';
@@ -230,7 +246,7 @@
       payload.important_data = Object.fromEntries(
         essential.map(k => [k, !!payload[k]])
       );
-  
+
       essential.forEach(k => {
         if (!(k in payload)) payload[k] = null;
       });
@@ -243,7 +259,8 @@
         batt_ready: battReady
       });
       battIncludedInPrimary = !!payload.batt;
-  
+
+      sharePayloadWithExtension(payload);
       finish(payload);
     };
 

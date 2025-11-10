@@ -17,7 +17,8 @@
     "autoform_manual_fill",
     "autoform_count_inputs",
     "autoform_apply_send_content",
-    "autoform_request_input_count"
+    "autoform_request_input_count",
+    "autoform_collect_browser_env"
   ]);
   const SEND_CONTENT_STORAGE_KEY = "autoformSendContent";
   const FLOATING_BUTTON_STORAGE_KEY = "autoformShowFloatingButton";
@@ -47,6 +48,26 @@
     remark:
       "お世話になっております。\n株式会社LASSICの阿部と申します。\n\n本日はエンジニア採用・調達における新規のお打ち合わせの件でご連絡いたしました。\n\n弊社ではIT人材特化型の紹介サービスを展開しておりまして、全国47都道府県から集客した1万人超のデータベースを基に、エンジニアをご紹介させていただいております。\n直近では「React、Next.jsでのフロントエンド開発」のご経験をお持ちの方や「PM、テックリード」のご経験をお持ちの方にも多数ご登録いただいております。\n\nRemoguサービスの強み：\n★実務経験3年以上の即戦力エンジニア/デザイナーが1万8000名ご登録\n★フルリモートワークからハイブリッドワークが可能な方まで幅広い人材バラエティ\n★フリーランス人材/中途採用双方でご支援可能\n★直近上流工程の開発やPM/PL・テックリードのご経験をお持ちの方の流入あり\n★開発系の言語からAI系、ゲーム系言語まで対応可能\n\nこちらのリンクより弊サービスについてご確認いただけますので、ご判断の材料にしていただけますと幸いです。\nhttps://www.lassic.co.jp/service/remogu/\n\nご多忙の中大変恐縮ではございますが、一度オンラインでのお打ち合わせの機会をいただけないでしょうか。\n現時点でのご活用ではなく、情報交換でも構いません。\nもしお話可能でしたら、オンラインにて30～60分ほどミーティングの機会をいただけますと幸いです。\n\n日程調整：https://nitte.app/QY6j3DQE60gxhQk40G8ulgiA5B63/42351ab0\n\nご検討のほど、よろしくお願い申し上げます。"
   };
+  const SEND_FIELD_DISPLAY_NAMES = {
+    name: "お名前",
+    name_kana: "お名前（かな）",
+    company: "会社名",
+    company_kana: "会社名（かな）",
+    "部署": "部署",
+    "住所": "住所",
+    postal_code: "郵便番号",
+    prefecture: "都道府県",
+    email: "メールアドレス",
+    tel: "電話番号",
+    fax: "FAX",
+    title: "タイトル",
+    "業種": "業種",
+    URL: "Webサイト",
+    remark: "メッセージ"
+  };
+  const FLOATING_PREVIEW_STYLE_ID = "autoform-floating-preview-style";
+  const FLOATING_PREVIEW_HIDE_DELAY_MS = 120;
+  const FLOATING_PREVIEW_VALUE_MAX_LENGTH = 60;
 
   const isTopFrame = window.top === window.self;
   let detectionNoticeShown = false;
@@ -62,10 +83,103 @@
   let floatingButtonInitScheduled = false;
   let floatingButtonCompletionInterval = null;
   let floatingButtonCompletionPending = false;
+  let floatingButtonContainer = null;
+  let floatingPreviewPanel = null;
+  let floatingPreviewList = null;
+  let floatingPreviewEmptyEl = null;
+  let floatingPreviewToggle = null;
+  let floatingPreviewVisible = false;
+  let floatingPreviewHideTimer = null;
+  let floatingPreviewRenderToken = 0;
+  const floatingPreviewCopyTimers = new Map();
   let masterEnabled = true;
   let autoRunOnOpen = true;
   let lastReportedInputCount = null;
   let inputCountReportTimer = null;
+
+  async function collectBrowserEnv() {
+    const env = {};
+    try {
+      env.ua = navigator.userAgent;
+    } catch (_) {}
+    try {
+      env.lang = navigator.languages;
+    } catch (_) {}
+    try {
+      const resolved = Intl.DateTimeFormat().resolvedOptions();
+      env.tz = resolved?.timeZone || null;
+    } catch (_) {}
+    try {
+      env.hw = {
+        hc: navigator.hardwareConcurrency ?? null,
+        mem: navigator.deviceMemory ?? null,
+        maxTouch: navigator.maxTouchPoints ?? 0
+      };
+    } catch (_) {}
+    try {
+      env.dpr = window.devicePixelRatio ?? 1;
+      env.viewportScale = window.visualViewport ? window.visualViewport.scale ?? null : null;
+    } catch (_) {}
+    try {
+      env.screen = {
+        w: screen?.width ?? null,
+        h: screen?.height ?? null,
+        colorDepth: screen?.colorDepth ?? null,
+        orientation: (screen?.orientation && (screen.orientation.type || screen.orientation.angle)) || null
+      };
+    } catch (_) {}
+    try {
+      if (typeof matchMedia === "function") {
+        env.prefers = {
+          dark: matchMedia("(prefers-color-scheme: dark)").matches,
+          reduced: matchMedia("(prefers-reduced-motion: reduce)").matches
+        };
+      }
+    } catch (_) {}
+    try {
+      if (navigator.userAgentData?.getHighEntropyValues) {
+        env.uaCH = await navigator.userAgentData.getHighEntropyValues([
+          "uaFullVersion",
+          "platform",
+          "platformVersion",
+          "bitness",
+          "model",
+          "fullVersionList",
+          "wow64"
+        ]);
+      }
+    } catch (_) {}
+    try {
+      if (location.protocol === "https:" && navigator.mediaDevices?.enumerateDevices) {
+        const list = await navigator.mediaDevices.enumerateDevices();
+        env.mediaCounts = list.reduce((acc, device) => {
+          acc[device.kind] = (acc[device.kind] || 0) + 1;
+          return acc;
+        }, {});
+      }
+    } catch (_) {}
+    try {
+      const canvas = document.createElement("canvas");
+      const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+      if (gl) {
+        const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+        env.webgl = {
+          vendor: dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : null,
+          renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null
+        };
+      }
+    } catch (_) {}
+    try {
+      if (performance?.memory) {
+        env.perfMemory = {
+          used: performance.memory.usedJSHeapSize,
+          total: performance.memory.totalJSHeapSize,
+          limit: performance.memory.jsHeapSizeLimit
+        };
+      }
+    } catch (_) {}
+    return env;
+  }
 
   function setNativeValue(el, v) {
     const proto = Object.getPrototypeOf(el);
@@ -264,16 +378,496 @@
     setTimeout(() => notice.remove(), 2500);
   }
 
+  function ensureFloatingPreviewStyles() {
+    if (document.getElementById(FLOATING_PREVIEW_STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = FLOATING_PREVIEW_STYLE_ID;
+    style.textContent = `
+.autoform-floating-button-wrapper {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2147483647;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.autoform-floating-controls {
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: 999px;
+  box-shadow: 0 16px 30px rgba(15, 23, 42, 0.22);
+  overflow: hidden;
+  background: transparent;
+}
+.autoform-floating-main-button {
+  border-radius: 999px 0 0 999px;
+  border: none;
+  padding-right: 22px !important;
+}
+.autoform-floating-preview-toggle {
+  min-width: 34px;
+  padding: 0 10px;
+  border-radius: 0 999px 999px 0;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(248, 250, 252, 0.9);
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: auto;
+  align-self: stretch;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.autoform-floating-preview-toggle:hover,
+.autoform-floating-preview-toggle:focus-visible {
+  background: rgba(241, 245, 249, 0.95);
+  color: #0a0f1c;
+  outline: none;
+}
+.autoform-floating-button-preview {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  right: 8px;
+  width: min(210px, calc(100vw - 48px));
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #0f172a;
+  box-shadow: none;
+  border: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  opacity: 0;
+  transform: translateY(6px) scale(0.99);
+  pointer-events: none;
+  transition: opacity 0.18s cubic-bezier(0.22, 0.9, 0.36, 1), transform 0.18s cubic-bezier(0.22, 0.9, 0.36, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.autoform-floating-button-preview.is-visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+.autoform-floating-button-preview-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.autoform-floating-button-preview-list > li {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.autoform-floating-button-preview-list::-webkit-scrollbar {
+  width: 6px;
+}
+.autoform-floating-button-preview-list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 999px;
+}
+.autoform-floating-button-preview-item {
+  width: 100%;
+  border-radius: 0;
+  padding: 6px 10px;
+  border: none;
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: #0f172a;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  font-family: inherit;
+  min-height: 32px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  opacity: 0;
+  transform: translateY(10px) scale(0.98);
+}
+.autoform-floating-button-preview.is-visible .autoform-floating-button-preview-item {
+  animation: autoformPreviewPop 0.22s cubic-bezier(0.34, 0.97, 0.48, 1.18) forwards;
+  transform-origin: bottom center;
+}
+.autoform-floating-button-preview-item:hover,
+.autoform-floating-button-preview-item:focus-visible {
+  box-shadow: 0 18px 32px rgba(99, 102, 241, 0.2);
+  outline: none;
+}
+.autoform-floating-button-preview-item.is-copied {
+  box-shadow: 0 18px 32px rgba(16, 185, 129, 0.28);
+}
+.autoform-floating-button-preview-item.is-error {
+  box-shadow: 0 18px 32px rgba(248, 113, 113, 0.25);
+}
+.autoform-preview-label {
+  font-size: 11px;
+  color: #5b6475;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  font-weight: 600;
+}
+.autoform-preview-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.autoform-preview-feedback {
+  font-size: 11px;
+  color: #10b981;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 0.18s ease, transform 0.18s ease, color 0.18s ease;
+}
+.autoform-floating-button-preview-item.is-copied .autoform-preview-feedback,
+.autoform-floating-button-preview-item.is-error .autoform-preview-feedback {
+  opacity: 1;
+  transform: translateY(0);
+}
+.autoform-floating-button-preview-item.is-error .autoform-preview-feedback {
+  color: #ef4444;
+}
+.autoform-floating-button-preview-empty {
+  font-size: 12px;
+  color: #94a3b8;
+  margin: 0;
+}
+@keyframes autoformPreviewPop {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(-1px) scale(1.01);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+`;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function getSendFieldDisplayName(key) {
+    return SEND_FIELD_DISPLAY_NAMES[key] || key;
+  }
+
+  function formatPreviewDisplayValue(value) {
+    if (typeof value !== "string") return "";
+    const collapsed = value.replace(/\s+/g, " ").trim();
+    if (!collapsed) return "";
+    if (collapsed.length > FLOATING_PREVIEW_VALUE_MAX_LENGTH) {
+      return `${collapsed.slice(0, FLOATING_PREVIEW_VALUE_MAX_LENGTH)}…`;
+    }
+    return collapsed;
+  }
+
+  function clearFloatingPreviewHideTimer() {
+    if (floatingPreviewHideTimer) {
+      clearTimeout(floatingPreviewHideTimer);
+      floatingPreviewHideTimer = null;
+    }
+  }
+
+  function hideFloatingPreview(immediate = false) {
+    if (!floatingPreviewPanel) return;
+    const applyHide = () => {
+      if (!floatingPreviewPanel) return;
+      floatingPreviewPanel.classList.remove("is-visible");
+      floatingPreviewPanel.setAttribute("aria-hidden", "true");
+      floatingPreviewVisible = false;
+    };
+    if (immediate) {
+      clearFloatingPreviewHideTimer();
+      applyHide();
+      return;
+    }
+    clearFloatingPreviewHideTimer();
+    floatingPreviewHideTimer = setTimeout(applyHide, FLOATING_PREVIEW_HIDE_DELAY_MS);
+  }
+
+  function showFloatingPreview() {
+    if (!floatingPreviewPanel) return;
+    clearFloatingPreviewHideTimer();
+    if (!floatingPreviewVisible) {
+      floatingPreviewPanel.classList.add("is-visible");
+      floatingPreviewPanel.setAttribute("aria-hidden", "false");
+      floatingPreviewVisible = true;
+      refreshFloatingPreviewContent();
+    }
+  }
+
+  function setFloatingPreviewEmptyVisible(isVisible, message) {
+    if (!floatingPreviewEmptyEl) return;
+    floatingPreviewEmptyEl.style.display = isVisible ? "block" : "none";
+    if (typeof message === "string") {
+      floatingPreviewEmptyEl.textContent = message;
+    }
+  }
+
+  function createFloatingPreviewPanel() {
+    ensureFloatingPreviewStyles();
+    const panel = document.createElement("div");
+    panel.className = "autoform-floating-button-preview";
+    panel.setAttribute("aria-hidden", "true");
+
+    const list = document.createElement("ul");
+    list.className = "autoform-floating-button-preview-list";
+    list.setAttribute("role", "list");
+
+    const empty = document.createElement("p");
+    empty.className = "autoform-floating-button-preview-empty";
+    empty.textContent = "まだ入力項目がありません";
+
+    panel.append(list, empty);
+    panel.addEventListener("click", handleFloatingPreviewListClick);
+    panel.addEventListener("keydown", handleFloatingPreviewListKeydown);
+    panel.addEventListener("mouseenter", handlePreviewInteractionEnter);
+    panel.addEventListener("mouseleave", handlePreviewInteractionLeave);
+    panel.addEventListener("focusin", handlePreviewInteractionFocusIn);
+    panel.addEventListener("focusout", handlePreviewInteractionFocusOut);
+
+    floatingPreviewPanel = panel;
+    floatingPreviewList = list;
+    floatingPreviewEmptyEl = empty;
+    return panel;
+  }
+
+  function handleFloatingPreviewListClick(event) {
+    const item = event.target.closest(".autoform-floating-button-preview-item");
+    if (!item) return;
+    event.preventDefault();
+    copyFloatingPreviewValue(item);
+  }
+
+  function handleFloatingPreviewListKeydown(event) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const item = event.target.closest(".autoform-floating-button-preview-item");
+    if (!item) return;
+    event.preventDefault();
+    copyFloatingPreviewValue(item);
+  }
+
+  function clearFloatingPreviewItemTimer(item) {
+    const timerId = floatingPreviewCopyTimers.get(item);
+    if (timerId) {
+      clearTimeout(timerId);
+      floatingPreviewCopyTimers.delete(item);
+    }
+  }
+
+  function clearAllFloatingPreviewItemTimers() {
+    floatingPreviewCopyTimers.forEach((timerId) => clearTimeout(timerId));
+    floatingPreviewCopyTimers.clear();
+  }
+
+  function showFloatingPreviewFeedback(item, message, state) {
+    if (!item) return;
+    clearFloatingPreviewItemTimer(item);
+    item.classList.remove("is-copied", "is-error");
+    if (state === "copied") {
+      item.classList.add("is-copied");
+    } else if (state === "error") {
+      item.classList.add("is-error");
+    }
+    const feedbackEl = item.querySelector(".autoform-preview-feedback");
+    if (feedbackEl) {
+      feedbackEl.textContent = message || "";
+    }
+    if (state) {
+      const timerId = setTimeout(() => {
+        item.classList.remove("is-copied", "is-error");
+        if (feedbackEl) {
+          feedbackEl.textContent = "";
+        }
+        floatingPreviewCopyTimers.delete(item);
+      }, 2000);
+      floatingPreviewCopyTimers.set(item, timerId);
+    }
+  }
+
+  async function copyTextToClipboard(text) {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand("copy");
+    textarea.remove();
+    if (!ok) {
+      throw new Error("clipboard unavailable");
+    }
+  }
+
+  async function copyFloatingPreviewValue(item) {
+    const value = item?.dataset?.value || "";
+    if (!value.trim()) {
+      showFloatingPreviewFeedback(item, "コピー対象がありません", "error");
+      return;
+    }
+    try {
+      await copyTextToClipboard(value);
+      showFloatingPreviewFeedback(item, "コピーしました", "copied");
+    } catch (err) {
+      console.error("[AutoForm] クリップボードコピーに失敗", err);
+      showFloatingPreviewFeedback(item, "コピーに失敗しました", "error");
+    }
+  }
+
+  function renderFloatingPreviewItems(record) {
+    if (!floatingPreviewList) return;
+    clearAllFloatingPreviewItemTimers();
+    floatingPreviewList.textContent = "";
+    const entries = Object.entries(record || {}).filter(([, value]) => {
+      return typeof value === "string" && value.trim().length > 0;
+    });
+    if (!entries.length) {
+      setFloatingPreviewEmptyVisible(true, "まだ入力項目がありません");
+      return;
+    }
+    setFloatingPreviewEmptyVisible(false);
+    const fragment = document.createDocumentFragment();
+    entries.forEach(([key, rawValue]) => {
+      const value = typeof rawValue === "string" ? rawValue : "";
+      const li = document.createElement("li");
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "autoform-floating-button-preview-item";
+      item.dataset.key = key;
+      item.dataset.value = value;
+      item.title = value;
+
+      const labelEl = document.createElement("span");
+      labelEl.className = "autoform-preview-label";
+      labelEl.textContent = getSendFieldDisplayName(key);
+
+      const valueEl = document.createElement("span");
+      valueEl.className = "autoform-preview-value";
+      valueEl.textContent = formatPreviewDisplayValue(value);
+      valueEl.title = value;
+
+      const feedbackEl = document.createElement("span");
+      feedbackEl.className = "autoform-preview-feedback";
+
+      item.append(labelEl, valueEl, feedbackEl);
+      li.appendChild(item);
+      fragment.appendChild(li);
+    });
+    floatingPreviewList.appendChild(fragment);
+  }
+
+  async function refreshFloatingPreviewContent() {
+    if (!floatingPreviewPanel) return;
+    const token = ++floatingPreviewRenderToken;
+    if (floatingPreviewList) {
+      clearAllFloatingPreviewItemTimers();
+      floatingPreviewList.textContent = "";
+    }
+    setFloatingPreviewEmptyVisible(true, "読み込み中…");
+    try {
+      const record = await getSendRecordFromStorage();
+      if (token !== floatingPreviewRenderToken) return;
+      renderFloatingPreviewItems(record);
+    } catch (err) {
+      console.error("[AutoForm] プレビュー用のデータ取得に失敗", err);
+      if (token !== floatingPreviewRenderToken) return;
+      setFloatingPreviewEmptyVisible(true, "データを取得できませんでした");
+    }
+  }
+
+  function isWithinPreviewInteractiveArea(node) {
+    if (!node) return false;
+    if (floatingPreviewPanel && floatingPreviewPanel.contains(node)) return true;
+    if (floatingPreviewToggle && floatingPreviewToggle.contains(node)) return true;
+    return false;
+  }
+
+  function handlePreviewInteractionEnter() {
+    showFloatingPreview();
+  }
+
+  function handlePreviewInteractionLeave(event) {
+    if (isWithinPreviewInteractiveArea(event.relatedTarget)) {
+      return;
+    }
+    hideFloatingPreview();
+  }
+
+  function handlePreviewInteractionFocusIn() {
+    showFloatingPreview();
+  }
+
+  function handlePreviewInteractionFocusOut(event) {
+    if (isWithinPreviewInteractiveArea(event.relatedTarget)) {
+      return;
+    }
+    hideFloatingPreview(true);
+  }
+
   function removeFloatingButton() {
-    if (!floatingButton) return;
-    floatingButton.removeEventListener("click", handleFloatingButtonClick);
-    floatingButton.remove();
-    floatingButton = null;
+    if (floatingButton) {
+      floatingButton.removeEventListener("click", handleFloatingButtonClick);
+      floatingButton = null;
+    }
+    if (floatingPreviewPanel) {
+      hideFloatingPreview(true);
+      floatingPreviewPanel.removeEventListener("click", handleFloatingPreviewListClick);
+      floatingPreviewPanel.removeEventListener("keydown", handleFloatingPreviewListKeydown);
+      floatingPreviewPanel.removeEventListener("mouseenter", handlePreviewInteractionEnter);
+      floatingPreviewPanel.removeEventListener("mouseleave", handlePreviewInteractionLeave);
+      floatingPreviewPanel.removeEventListener("focusin", handlePreviewInteractionFocusIn);
+      floatingPreviewPanel.removeEventListener("focusout", handlePreviewInteractionFocusOut);
+      floatingPreviewPanel = null;
+    } else {
+      clearFloatingPreviewHideTimer();
+    }
+    if (floatingPreviewToggle) {
+      floatingPreviewToggle.removeEventListener("mouseenter", handlePreviewInteractionEnter);
+      floatingPreviewToggle.removeEventListener("mouseleave", handlePreviewInteractionLeave);
+      floatingPreviewToggle.removeEventListener("focusin", handlePreviewInteractionFocusIn);
+      floatingPreviewToggle.removeEventListener("focusout", handlePreviewInteractionFocusOut);
+      floatingPreviewToggle = null;
+    }
+    if (floatingButtonContainer) {
+      floatingButtonContainer.remove();
+      floatingButtonContainer = null;
+    }
+    floatingPreviewList = null;
+    floatingPreviewEmptyEl = null;
+    floatingPreviewVisible = false;
+    floatingPreviewRenderToken += 1;
+    clearAllFloatingPreviewItemTimers();
     clearFloatingButtonCompletionTimer();
   }
 
   function createFloatingButtonElement() {
-    if (floatingButton || typeof document === "undefined") return;
+    if (floatingButton || floatingButtonContainer || typeof document === "undefined") return;
     if (window.top !== window.self) return;
     if (!document.body) {
       if (!floatingButtonInitScheduled) {
@@ -291,15 +885,28 @@
       }
       return;
     }
+    ensureFloatingPreviewStyles();
+    const wrapper = document.createElement("div");
+    wrapper.className = "autoform-floating-button-wrapper";
+    Object.assign(wrapper.style, {
+      position: "fixed",
+      bottom: "24px",
+      right: "24px",
+      zIndex: "2147483647",
+      display: "inline-flex",
+      flexDirection: "column",
+      alignItems: "flex-end",
+      gap: "8px"
+    });
+
+    const previewPanel = createFloatingPreviewPanel();
+
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = FLOATING_BUTTON_LABEL_DEFAULT;
     Object.assign(btn.style, {
-      position: "fixed",
-      bottom: "24px",
-      right: "24px",
       padding: "11px 18px",
-      borderRadius: "999px",
+      borderRadius: "999px 0 0 999px",
       border: "none",
       background: FLOATING_BUTTON_DEFAULT_BACKGROUND,
       color: "#fff",
@@ -311,10 +918,26 @@
       fontFamily: "inherit",
       transition: "opacity 0.25s ease, transform 0.25s ease, box-shadow 0.28s ease, background 0.28s ease"
     });
+    btn.classList.add("autoform-floating-main-button");
     applyFloatingButtonDefaultStyle(btn);
     btn.addEventListener("click", handleFloatingButtonClick);
-    document.body.appendChild(btn);
+    const controls = document.createElement("div");
+    controls.className = "autoform-floating-controls";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "autoform-floating-preview-toggle";
+    toggle.setAttribute("aria-label", "コピー候補を表示");
+    toggle.innerHTML = '<span aria-hidden="true">▲</span>';
+    toggle.addEventListener("mouseenter", handlePreviewInteractionEnter);
+    toggle.addEventListener("mouseleave", handlePreviewInteractionLeave);
+    toggle.addEventListener("focusin", handlePreviewInteractionFocusIn);
+    toggle.addEventListener("focusout", handlePreviewInteractionFocusOut);
+    controls.append(btn, toggle);
+    wrapper.append(controls, previewPanel);
+    document.body.appendChild(wrapper);
+    floatingButtonContainer = wrapper;
     floatingButton = btn;
+    floatingPreviewToggle = toggle;
   }
 
   function updateFloatingButtonVisibility(enabled) {
@@ -406,7 +1029,7 @@
           formsCount,
           controlCount
         });
-        return { error: "フォーム候補が見つからないためAPIリクエストをスキップしました" };
+        return { applied: { total: 0, success: 0, skipped: 0 }, skipped: true };
       }
       const html = getPageHtml();
       if (!html) {
@@ -859,7 +1482,9 @@
       });
     }
     if (command === "autoform_count_inputs") {
-      return { count: countEligibleInputs(document) };
+      const count = countEligibleInputs(document);
+      reportInputCountNow(count);
+      return { count };
     }
     if (command === "autoform_apply_send_content") {
       const sendContentResult = applySendContent(payload);
@@ -868,6 +1493,9 @@
     if (command === "autoform_request_input_count") {
       const count = reportInputCountNow();
       return { count };
+    }
+    if (command === "autoform_collect_browser_env") {
+      return collectBrowserEnv().then((env) => ({ env }));
     }
     return null;
   }

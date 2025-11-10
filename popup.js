@@ -3,10 +3,7 @@
   const SEND_STORAGE_KEY = "autoformSendContent";
   const FLOATING_BUTTON_STORAGE_KEY = "autoformShowFloatingButton";
   const AUTO_BUTTON_STORAGE_KEY = "autoformShowAutoButton";
-  const DETAIL_STORAGE_KEYS = {
-    api: "autoformCachedApiDetails",
-    curl: "autoformCachedCurlDetails"
-  };
+  const API_KEY_STORAGE_KEY = "aimsalesApiKey";
   const DEFAULT_SEND_CONTENT = {
     name: "阿部 由希子",
     name_kana: "あべ ゆきこ",
@@ -27,7 +24,7 @@
 
   let currentData = null;
   let currentSendContent = null;
-  let cachedDetails = { api: "", curl: "" };
+  let currentApiKey = "";
   const AUTO_SAVE_DEBOUNCE_MS = 800;
   let autoSaveTimerId = null;
   let lastAutoSavedSnapshot = null;
@@ -81,6 +78,27 @@
     }
   }
 
+  function setPlanStatus(hasKey) {
+    const planEl = qs("plan-status");
+    const badgeEl = qs("plan-badge");
+    const label = hasKey ? "有料版" : "無料版";
+    if (planEl) {
+      planEl.textContent = label;
+      planEl.classList.toggle("plan-status-paid", hasKey);
+    }
+    if (badgeEl) {
+      badgeEl.textContent = label;
+      badgeEl.classList.toggle("plan-badge-paid", hasKey);
+    }
+  }
+
+  function setApiKeyStatus(message, isError = false) {
+    const statusEl = qs("api-key-status");
+    if (!statusEl) return;
+    statusEl.textContent = message;
+    statusEl.style.color = isError ? "#b91c1c" : "#475569";
+  }
+
   function initFloatingButtonToggle(checkbox) {
     if (!checkbox) return;
 
@@ -99,6 +117,65 @@
     checkbox.addEventListener("change", () => {
       if (!chrome?.storage?.sync) return;
       chrome.storage.sync.set({ [FLOATING_BUTTON_STORAGE_KEY]: checkbox.checked });
+    });
+  }
+
+  function loadApiKeyState() {
+    const input = qs("api-key-input");
+    if (!chrome?.storage?.sync) {
+      currentApiKey = "";
+      if (input) input.value = "";
+      setPlanStatus(false);
+      setApiKeyStatus("storage が利用できません (APIキー未設定)", true);
+      return;
+    }
+    chrome.storage.sync.get(API_KEY_STORAGE_KEY, (res) => {
+      const stored = res?.[API_KEY_STORAGE_KEY];
+      currentApiKey = typeof stored === "string" ? stored : "";
+      if (input && document.activeElement !== input) {
+        input.value = currentApiKey;
+      }
+      setPlanStatus(Boolean(currentApiKey));
+      setApiKeyStatus(currentApiKey ? "保存済みのAPIキーを読み込みました" : "APIキーが未設定です");
+    });
+  }
+
+  function initApiKeySaveHandler(button) {
+    if (!button) return;
+    button.addEventListener("click", () => {
+      const input = qs("api-key-input");
+      if (!input) return;
+      const value = input.value.trim();
+      if (!chrome?.storage?.sync) {
+        setApiKeyStatus("storage が利用できません (保存不可)", true);
+        return;
+      }
+      button.disabled = true;
+      const finish = (successMessage, isError = false) => {
+        button.disabled = false;
+        setApiKeyStatus(successMessage, isError);
+      };
+      if (!value) {
+        chrome.storage.sync.remove(API_KEY_STORAGE_KEY, () => {
+          if (chrome.runtime?.lastError) {
+            finish(`APIキーの削除に失敗しました: ${chrome.runtime.lastError.message}`, true);
+            return;
+          }
+          currentApiKey = "";
+          setPlanStatus(false);
+          finish("APIキーを削除しました");
+        });
+        return;
+      }
+      chrome.storage.sync.set({ [API_KEY_STORAGE_KEY]: value }, () => {
+        if (chrome.runtime?.lastError) {
+          finish(`APIキーの保存に失敗しました: ${chrome.runtime.lastError.message}`, true);
+          return;
+        }
+        currentApiKey = value;
+        setPlanStatus(true);
+        finish("APIキーを保存しました");
+      });
     });
   }
 
@@ -263,6 +340,22 @@
     scheduleAutoSave();
   }
 
+  if (chrome?.storage?.onChanged) {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "sync") return;
+      if (Object.prototype.hasOwnProperty.call(changes, API_KEY_STORAGE_KEY)) {
+        const nextValue = changes[API_KEY_STORAGE_KEY]?.newValue;
+        currentApiKey = typeof nextValue === "string" ? nextValue : "";
+        const input = qs("api-key-input");
+        if (input && document.activeElement !== input) {
+          input.value = currentApiKey;
+        }
+        setPlanStatus(Boolean(currentApiKey));
+        setApiKeyStatus(currentApiKey ? "APIキーが更新されました" : "APIキーが未設定です");
+      }
+    });
+  }
+
   function handleFileChange(file) {
     if (!file) return;
     const reader = new FileReader();
@@ -376,29 +469,6 @@
     });
   }
 
-  async function fetchUserInfoDetails({ refresh = false, reason = null } = {}) {
-    return new Promise((resolve, reject) => {
-      if (!chrome?.runtime?.sendMessage) {
-        reject(new Error("runtime API が利用できません"));
-        return;
-      }
-      chrome.runtime.sendMessage(
-        { type: "autoform_get_user_info_details", refresh, reason },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-          if (response?.error && !response?.userInfo) {
-            reject(new Error(response.error));
-            return;
-          }
-          resolve(response?.userInfo || null);
-        }
-      );
-    });
-  }
-
   function formatApiLog(log) {
     if (!log) {
       return "まだAPIリクエストの履歴がありません。フォーム入力を実行してください。";
@@ -433,103 +503,6 @@
     return lines.join("\n");
   }
 
-  async function handleShowApiDetails(btn, outputEl) {
-    if (!outputEl) return;
-    const previousText = outputEl.textContent || "";
-    const hadPrevious = Boolean(previousText.trim());
-    btn.disabled = true;
-    outputEl.style.display = "block";
-    outputEl.textContent = "取得中...";
-    try {
-      const log = await fetchApiLog();
-      if (log) {
-        const text = formatApiLog(log);
-        setDetailTextOutput(outputEl, text);
-        cacheDetailText("api", text);
-        setDetailButtonState(btn, true);
-      } else if (hadPrevious) {
-        setDetailTextOutput(outputEl, previousText);
-      } else {
-        outputEl.textContent = "まだAPIレスポンスを取得していません。";
-      }
-    } catch (err) {
-      outputEl.textContent = `詳細取得に失敗しました: ${err.message}`;
-    } finally {
-      btn.disabled = false;
-    }
-  }
-
-  const FLOW_STAGE_LABELS = {
-    first: "1回目 (入力→確認)",
-    second: "2回目 (送信確定)"
-  };
-  const FLOW_REASON_LABELS = {
-    first_detected: "初回: メール一致",
-    email_match: "メール一致 (セッション継続)",
-    "submit=send": "body に submit=send",
-    "url_path=/send": "URL が /send",
-    "location=/thanks": "Location が /thanks|/completion",
-    "referer=/confirm": "Referer が /confirm",
-    form_id_combo: "フォームID + submitConfirm 無し",
-    cdp_stack_match: "CDP: submit/click stack一致"
-  };
-
-  function filterLogsByStage(logs, stage = null) {
-    if (!Array.isArray(logs)) return [];
-    if (!stage) return logs;
-    return logs.filter((log) => log?.flowStage === stage);
-  }
-
-  function formatCurlLogs(logs) {
-    if (!Array.isArray(logs) || logs.length === 0) {
-      return "まだメールアドレスを含むリクエストを検知していません。フォーム送信後に再度お試しください。";
-    }
-    return logs
-      .map((log, index) => {
-        const lines = [];
-        const time = new Date(log.timestamp || Date.now()).toLocaleString();
-        lines.push(`#${index + 1} / ${time}`);
-        lines.push(`URL: ${log.url}`);
-        if (log.origin) {
-          lines.push(`Origin: ${log.origin}`);
-        }
-        lines.push(`送信元URL: ${log.sourceUrl || "不明"}`);
-        lines.push(`Method: ${log.method || "不明"} / Status: ${log.statusCode ?? "不明"}`);
-        if (log.error) {
-          lines.push(`Error: ${log.error}`);
-        }
-        if (log.email) {
-          lines.push(`Email: ${log.email}`);
-        }
-        if (log.flowStage || log.flowReason || log.flowId || log.formId) {
-          const stageLabel = FLOW_STAGE_LABELS[log.flowStage] || log.flowStage;
-          if (stageLabel) {
-            lines.push(`Flow Stage: ${stageLabel}`);
-          }
-          const reasonLabel = log.flowReason ? FLOW_REASON_LABELS[log.flowReason] || log.flowReason : null;
-          if (reasonLabel) {
-            lines.push(`Flow 判定根拠: ${reasonLabel}`);
-          }
-          if (log.flowId) {
-            lines.push(`Flow ID: ${log.flowId}`);
-          }
-          if (log.formId) {
-            lines.push(`Form ID: ${log.formId}`);
-          }
-          if (typeof log.flowCompleted === "boolean" && log.flowStage === "second") {
-            lines.push(`完了検知: ${log.flowCompleted ? "完了" : "未確認"}`);
-          }
-        }
-        if (log.cdpMatch?.metadata?.eventName) {
-          lines.push(`CDPイベント: ${log.cdpMatch.metadata.eventName}`);
-        }
-        lines.push("curl:");
-        lines.push(log.curl || "(curl文字列なし)");
-        return lines.join("\n");
-      })
-      .join("\n\n");
-  }
-
   function stringifyWithLimit(value, limit = 12000) {
     try {
       const normalized = value === undefined ? null : value;
@@ -546,391 +519,6 @@
     }
   }
 
-  function formatUserInfoDetails(info) {
-    if (!info) {
-      return "まだユーザー情報を取得していません。対象ページを開いた後に再度お試しください。";
-    }
-    const lines = [];
-    const time = new Date(info.timestamp || Date.now()).toLocaleString();
-    lines.push(`取得時刻: ${time}`);
-    if (info.reason) {
-      lines.push(`トリガー: ${info.reason}`);
-    }
-    lines.push("");
-    lines.push("== Runtime ==");
-    lines.push(stringifyWithLimit(info.runtime));
-    lines.push("");
-    lines.push("== Platform ==");
-    lines.push(stringifyWithLimit(info.platformInfo));
-    lines.push("");
-    lines.push("== Browser ==");
-    lines.push(stringifyWithLimit(info.browserInfo));
-    lines.push("");
-    lines.push("== Permissions ==");
-    lines.push(stringifyWithLimit(info.permissions));
-    lines.push("");
-    lines.push("== Profile (identity) ==");
-    lines.push(stringifyWithLimit(info.profile));
-    lines.push("");
-    lines.push("== System Signals ==");
-    lines.push(stringifyWithLimit(info.systemSignals));
-    lines.push("");
-    const storage = info.storage || {};
-    ["local", "sync"].forEach((area) => {
-      const snapshot = storage[area];
-      lines.push(`== Storage (${area}) ==`);
-      if (!snapshot || snapshot.available === false) {
-        lines.push("利用できません");
-      } else {
-        if (snapshot.error) {
-          lines.push(`Error: ${snapshot.error}`);
-        }
-        if (typeof snapshot.bytesInUse === "number") {
-          lines.push(`Bytes: ${snapshot.bytesInUse}`);
-        }
-        if (Array.isArray(snapshot.keys)) {
-          lines.push(`Keys: ${snapshot.keys.length ? snapshot.keys.join(", ") : "(なし)"}`);
-        }
-        lines.push(stringifyWithLimit(snapshot.data));
-      }
-      lines.push("");
-    });
-    return lines.join("\n").trim();
-  }
-
-  async function handleShowUserInfoDetails(btn, outputEl) {
-    if (!outputEl) return;
-    btn.disabled = true;
-    outputEl.style.display = "block";
-    outputEl.textContent = "取得中...";
-    try {
-      const info = await fetchUserInfoDetails({ refresh: true, reason: "popup_manual" });
-      outputEl.textContent = formatUserInfoDetails(info);
-      await refreshUserInfoDetailIndicator({ silent: true });
-    } catch (err) {
-      outputEl.textContent = `ユーザー情報の取得に失敗しました: ${err.message}`;
-    } finally {
-      btn.disabled = false;
-    }
-  }
-
-  function formatAnalysisLogEntries(logs) {
-    if (!Array.isArray(logs) || logs.length === 0) {
-      return "まだデータがありません";
-    }
-    return logs
-      .map((log, index) => {
-        const lines = [];
-        const time = new Date(log.timestamp || Date.now()).toLocaleString();
-        lines.push(`#${index + 1} / ${time}`);
-        lines.push(`送信元URL: ${log.sourceUrl || "不明"}`);
-        lines.push("");
-        lines.push("-- curl --");
-        lines.push(log.curl || "(curl文字列なし)");
-        if (log.request) {
-          lines.push("");
-          lines.push("-- Request --");
-          lines.push(JSON.stringify(log.request, null, 2));
-        }
-        if (log.response) {
-          lines.push("");
-          lines.push("-- Response --");
-          lines.push(JSON.stringify(log.response, null, 2));
-        }
-        return lines.join("\n");
-      })
-      .join("\n\n" + "-".repeat(20) + "\n\n");
-  }
-
-  function sanitizeApiLogForAnalysis(log) {
-    if (!log || typeof log !== "object") {
-      return log;
-    }
-    const request = log.request;
-    if (!request || typeof request !== "object" || !Object.prototype.hasOwnProperty.call(request, "user_info")) {
-      return log;
-    }
-    const sanitizedRequest = { ...request };
-    delete sanitizedRequest.user_info;
-    return { ...log, request: sanitizedRequest };
-  }
-
-  function formatAnalysisData(logs, { apiLog = null, currentUrl = null } = {}) {
-    const sanitizedApiLog = sanitizeApiLogForAnalysis(apiLog);
-    const latestSourceUrl = Array.isArray(logs) && logs.length ? logs[0]?.sourceUrl || "" : "";
-    let urlText = "";
-    if (sanitizedApiLog?.request?.page_url) {
-      urlText = `${sanitizedApiLog.request.page_url} (直前レスポンス)`;
-    } else if (latestSourceUrl) {
-      urlText = `${latestSourceUrl} (curl取得時)`;
-    } else if (currentUrl) {
-      urlText = `${currentUrl} (現在のタブ)`;
-    } else {
-      urlText = "取得できませんでした";
-    }
-    const sections = [];
-    sections.push("=== 解析対象のWebサイトURL (直前のレスポンス時) ===");
-    sections.push(urlText);
-    sections.push("");
-    sections.push("=== 直前のレスポンス詳細 ===");
-    sections.push(formatApiLog(sanitizedApiLog));
-    sections.push("");
-    sections.push("=== curl / リクエストログ ===");
-    sections.push(formatAnalysisLogEntries(logs));
-    return sections.join("\n");
-  }
-
-  function formatDetailTimestamp(ts) {
-    if (!ts) return "";
-    try {
-      return new Date(ts).toLocaleString();
-    } catch (_) {
-      return "";
-    }
-  }
-
-  function setDetailStatus(el, state, text) {
-    if (!el) return;
-    el.textContent = text;
-    el.dataset.state = state;
-    el.classList.toggle("has-data", state === "has-data");
-    el.classList.toggle("error", state === "error");
-  }
-
-  function setDetailButtonState(btn, hasData) {
-    if (!btn) return;
-    btn.classList.toggle("data-available", !!hasData);
-  }
-
-  function setDetailTextOutput(el, text) {
-    if (!el) return;
-    if (text) {
-      el.textContent = text;
-      el.style.display = "block";
-    } else {
-      el.textContent = "";
-      el.style.display = "none";
-    }
-  }
-
-  function cacheDetailText(kind, text) {
-    if (!chrome?.storage?.local || !text) return;
-    const key = DETAIL_STORAGE_KEYS[kind];
-    if (!key) return;
-    cachedDetails = { ...cachedDetails, [kind]: text };
-    chrome.storage.local.set({ [key]: text });
-  }
-
-  function clearCachedDetails() {
-    if (!chrome?.storage?.local) return;
-    chrome.storage.local.remove(Object.values(DETAIL_STORAGE_KEYS));
-    cachedDetails = { api: "", curl: "" };
-  }
-
-  function loadCachedDetails() {
-    return new Promise((resolve) => {
-      if (!chrome?.storage?.local) {
-        cachedDetails = { api: "", curl: "" };
-        resolve(cachedDetails);
-        return;
-      }
-      chrome.storage.local.get(Object.values(DETAIL_STORAGE_KEYS), (res) => {
-      cachedDetails = {
-        api: res?.[DETAIL_STORAGE_KEYS.api] || "",
-        curl: res?.[DETAIL_STORAGE_KEYS.curl] || ""
-      };
-        resolve(cachedDetails);
-      });
-    });
-  }
-
-  async function refreshCurlIndicator(
-    {
-      indicatorId,
-      buttonId,
-      cacheKey,
-      stage = null,
-      emptyLabel = "データ未検知",
-      cachedLabel = "保存済みのログあり"
-    },
-    options = {}
-  ) {
-    const indicator = qs(indicatorId);
-    const btn = qs(buttonId);
-    if (!indicator) return;
-    if (!options.silent) {
-      setDetailStatus(indicator, "loading", "確認中…");
-    }
-    try {
-      const logs = await fetchCurlLogs();
-      const filtered = filterLogsByStage(logs, stage);
-      if (filtered.length > 0) {
-        const time = formatDetailTimestamp(filtered[0].timestamp);
-        setDetailStatus(indicator, "has-data", time ? `最新検知: ${time}` : "データあり");
-        setDetailButtonState(btn, true);
-      } else if (cachedDetails[cacheKey]) {
-        setDetailStatus(indicator, "has-data", cachedLabel);
-        setDetailButtonState(btn, true);
-      } else {
-        setDetailStatus(indicator, "empty", emptyLabel);
-        setDetailButtonState(btn, false);
-      }
-    } catch (_) {
-      setDetailStatus(indicator, "error", "取得エラー");
-      setDetailButtonState(btn, false);
-    }
-  }
-
-  async function refreshCurlDetailIndicator(options = {}) {
-    await refreshCurlIndicator(
-      {
-        indicatorId: "curl-details-status",
-        buttonId: "show-curl-details",
-        cacheKey: "curl",
-        stage: null,
-        emptyLabel: "データ未検知",
-        cachedLabel: "保存済みのログあり"
-      },
-      options
-    );
-  }
-
-  async function refreshApiDetailIndicator(options = {}) {
-    const indicator = qs("api-details-status");
-    const btn = qs("show-api-details");
-    if (!indicator) return;
-    if (!options.silent) {
-      setDetailStatus(indicator, "loading", "確認中…");
-    }
-    try {
-      const log = await fetchApiLog();
-      if (log) {
-        const time = formatDetailTimestamp(log.timestamp);
-        setDetailStatus(indicator, "has-data", time ? `最新取得: ${time}` : "データあり");
-        setDetailButtonState(btn, true);
-      } else if (cachedDetails.api) {
-        setDetailStatus(indicator, "has-data", "保存済みのレスポンスあり");
-        setDetailButtonState(btn, true);
-      } else {
-        setDetailStatus(indicator, "empty", "未取得");
-        setDetailButtonState(btn, false);
-      }
-    } catch (_) {
-      setDetailStatus(indicator, "error", "取得エラー");
-      setDetailButtonState(btn, false);
-    }
-  }
-
-  async function refreshUserInfoDetailIndicator(options = {}) {
-    const indicator = qs("user-info-details-status");
-    const btn = qs("show-user-info-details");
-    if (!indicator) return;
-    if (!options.silent) {
-      setDetailStatus(indicator, "loading", "確認中…");
-    }
-    try {
-      const snapshot = await fetchUserInfoDetails({ refresh: false, reason: "popup_indicator" });
-      if (snapshot?.timestamp) {
-        const time = formatDetailTimestamp(snapshot.timestamp);
-        setDetailStatus(indicator, "has-data", time ? `最新取得: ${time}` : "データあり");
-        setDetailButtonState(btn, true);
-      } else {
-        setDetailStatus(indicator, "empty", "未取得");
-        setDetailButtonState(btn, false);
-      }
-    } catch (_) {
-      setDetailStatus(indicator, "error", "取得エラー");
-      setDetailButtonState(btn, false);
-    }
-  }
-
-  async function refreshDetailIndicators(options = {}) {
-    await Promise.all([
-      refreshCurlDetailIndicator(options),
-      refreshApiDetailIndicator(options),
-      refreshUserInfoDetailIndicator(options),
-      refreshAnalysisDataSection(options)
-    ]);
-  }
-
-  async function handleShowCurlDetails(
-    btn,
-    outputEl,
-    {
-      stage = null,
-      cacheKey = "curl",
-      emptyMessage = "まだcurlログを検知していません。フォーム送信後に再度お試しください。",
-      label = "curl"
-    } = {}
-  ) {
-    if (!outputEl) return;
-    const previousText = outputEl.textContent || "";
-    const hadPrevious = Boolean(previousText.trim());
-    btn.disabled = true;
-    outputEl.style.display = "block";
-    outputEl.textContent = "取得中...";
-    try {
-      const logs = await fetchCurlLogs();
-      const filtered = filterLogsByStage(logs, stage);
-      if (Array.isArray(filtered) && filtered.length) {
-        const text = formatCurlLogs(filtered);
-        setDetailTextOutput(outputEl, text);
-        cacheDetailText(cacheKey, text);
-        setDetailButtonState(btn, true);
-      } else if (hadPrevious) {
-        setDetailTextOutput(outputEl, previousText);
-      } else {
-        outputEl.textContent = emptyMessage;
-      }
-    } catch (err) {
-      outputEl.textContent = `${label}情報の取得に失敗しました: ${err.message}`;
-    } finally {
-      btn.disabled = false;
-    }
-  }
-
-  function handleDetailHistoryReset(btn) {
-    if (!btn) return;
-    btn.addEventListener("click", () => {
-      btn.disabled = true;
-      clearCachedDetails();
-      setDetailTextOutput(qs("curl-details"), "");
-      setDetailTextOutput(qs("api-details"), "");
-      setDetailTextOutput(qs("user-info-details"), "");
-      setDetailTextOutput(qs("analysis-data"), "まだデータがありません");
-      setDetailStatus(qs("curl-details-status"), "empty", "データ未検知");
-      setDetailStatus(qs("api-details-status"), "empty", "未取得");
-      setDetailStatus(qs("user-info-details-status"), "empty", "未取得");
-      setDetailStatus(qs("analysis-data-status"), "empty", "データ未検知");
-
-      const sendResetMessage = () =>
-        new Promise((resolve, reject) => {
-          if (!chrome?.runtime?.sendMessage) {
-            resolve(false);
-            return;
-          }
-          chrome.runtime.sendMessage({ type: "autoform_reset_debug_data" }, (response) => {
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-              return;
-            }
-            resolve(response?.ok === true);
-          });
-        });
-
-      sendResetMessage()
-        .catch((err) => {
-          console.warn("[AutoForm] detail reset failed", err);
-          setDetailStatus(qs("curl-details-status"), "error", "リセットエラー");
-          setDetailStatus(qs("api-details-status"), "error", "リセットエラー");
-          setDetailStatus(qs("analysis-data-status"), "error", "リセットエラー");
-        })
-        .finally(() => {
-          btn.disabled = false;
-          refreshDetailIndicators({ silent: true });
-        });
-    });
-  }
 
   async function listFrameOrigins(tabId) {
     const frames = await new Promise((resolve, reject) => {
@@ -998,76 +586,6 @@
     return ok;
   }
 
-  async function refreshAnalysisDataSection(options = {}) {
-    const statusEl = qs("analysis-data-status");
-    const outputEl = qs("analysis-data");
-    if (!statusEl || !outputEl) return;
-    if (!options.silent) {
-      statusEl.textContent = "確認中…";
-    }
-    try {
-      const logs = await fetchCurlLogs();
-      const [apiLog, currentUrl] = await Promise.all([fetchApiLog().catch(() => null), getActiveTabUrl()]);
-      const latestTimestamp = (Array.isArray(logs) && logs[0]?.timestamp) || apiLog?.timestamp || null;
-      if (latestTimestamp) {
-        const time = formatDetailTimestamp(latestTimestamp);
-        statusEl.textContent = time ? `最新検知: ${time}` : "情報あり";
-      } else if ((Array.isArray(logs) && logs.length > 0) || apiLog) {
-        statusEl.textContent = "情報あり";
-      } else {
-        statusEl.textContent = "データ未検知";
-      }
-      outputEl.textContent = formatAnalysisData(logs, { apiLog, currentUrl });
-    } catch (err) {
-      statusEl.textContent = "取得エラー";
-      outputEl.textContent = `curl情報の取得に失敗しました: ${err.message}`;
-    }
-  }
-
-  async function handleCopyAnalysisData(btn) {
-    const outputEl = qs("analysis-data");
-    const feedbackEl = qs("analysis-copy-feedback");
-    if (!outputEl) return;
-    const text = outputEl.textContent || "";
-    if (!text.trim()) {
-      if (feedbackEl) {
-        feedbackEl.textContent = "コピー対象のデータがありません";
-        feedbackEl.style.color = "#dc2626";
-        feedbackEl.style.display = "block";
-        setTimeout(() => {
-          feedbackEl.style.display = "none";
-          feedbackEl.style.color = "#059669";
-          feedbackEl.textContent = "コピーしました";
-        }, 2000);
-      }
-      return;
-    }
-    btn.disabled = true;
-    try {
-      await navigator.clipboard.writeText(text);
-      if (feedbackEl) {
-        feedbackEl.textContent = "コピーしました";
-        feedbackEl.style.color = "#059669";
-        feedbackEl.style.display = "block";
-        setTimeout(() => {
-          feedbackEl.style.display = "none";
-        }, 2000);
-      }
-    } catch (err) {
-      if (feedbackEl) {
-        feedbackEl.textContent = `コピーに失敗しました: ${err.message}`;
-        feedbackEl.style.color = "#dc2626";
-        feedbackEl.style.display = "block";
-        setTimeout(() => {
-          feedbackEl.style.display = "none";
-          feedbackEl.style.color = "#059669";
-          feedbackEl.textContent = "コピーしました";
-        }, 2500);
-      }
-    } finally {
-      btn.disabled = false;
-    }
-  }
 
   function isIgnorableConnectionError(message) {
     if (!message || typeof message !== "string") return false;
@@ -1160,7 +678,6 @@
     } finally {
       updateExecuteState();
       await refreshDetectedInputCount();
-      await refreshDetailIndicators({ silent: true });
     }
   }
 
@@ -1201,7 +718,6 @@
     } finally {
       btn.disabled = false;
       await refreshDetectedInputCount();
-      await refreshDetailIndicators({ silent: true });
     }
   }
 
@@ -1299,38 +815,14 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     const fillBtn = qs("fill-now");
-    const apiDetailsBtn = qs("show-api-details");
-    const apiDetailsBox = qs("api-details");
-    const userInfoDetailsBtn = qs("show-user-info-details");
-    const userInfoDetailsBox = qs("user-info-details");
-    const curlDetailsBtn = qs("show-curl-details");
-    const curlDetailsBox = qs("curl-details");
-    const copyAnalysisBtn = qs("copy-analysis-data");
-    const resetDetailHistoryBtn = qs("reset-detail-history");
     const sendContentToggle = qs("send-content-toggle");
     const sendContentBody = qs("send-content-body");
     const saveSendBtn = qs("save-send-content");
     const floatingButtonCheckbox = qs("show-floating-button");
+    const saveApiKeyBtn = qs("save-api-key");
 
     if (fillBtn) {
       fillBtn.addEventListener("click", () => handleManualFill(fillBtn));
-    }
-    if (apiDetailsBtn && apiDetailsBox) {
-      apiDetailsBtn.addEventListener("click", () => handleShowApiDetails(apiDetailsBtn, apiDetailsBox));
-    }
-    if (userInfoDetailsBtn && userInfoDetailsBox) {
-      userInfoDetailsBtn.addEventListener("click", () =>
-        handleShowUserInfoDetails(userInfoDetailsBtn, userInfoDetailsBox)
-      );
-    }
-    if (curlDetailsBtn && curlDetailsBox) {
-      curlDetailsBtn.addEventListener("click", () => handleShowCurlDetails(curlDetailsBtn, curlDetailsBox));
-    }
-    if (copyAnalysisBtn) {
-      copyAnalysisBtn.addEventListener("click", () => handleCopyAnalysisData(copyAnalysisBtn));
-    }
-    if (resetDetailHistoryBtn) {
-      handleDetailHistoryReset(resetDetailHistoryBtn);
     }
     const sendContentFields = getSendContentFields();
     if (sendContentFields.length) {
@@ -1344,16 +836,10 @@
     initSendContentToggle(sendContentToggle, sendContentBody, true);
     updateSendContentWarning();
     initFloatingButtonToggle(floatingButtonCheckbox);
+    initApiKeySaveHandler(saveApiKeyBtn);
 
     refreshDetectedInputCount();
     loadSendContent();
-    loadCachedDetails()
-      .then(({ api, curl }) => {
-        setDetailTextOutput(apiDetailsBox, api);
-        setDetailTextOutput(curlDetailsBox, curl);
-      })
-      .finally(() => {
-        refreshDetailIndicators();
-      });
+    loadApiKeyState();
   });
 })();
