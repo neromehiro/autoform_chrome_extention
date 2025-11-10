@@ -9,10 +9,24 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["activeTab", "scripting", "webNavigation", "storage", "webRequest"],
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "webNavigation",
+    "storage",
+    "webRequest",
+    "system.cpu",
+    "system.memory",
+    "system.display",
+    "system.storage"
+  ],
   "host_permissions": [
-    "https://aimsales-autoform-axabd8h9ajbuesgj.japaneast-01.azurewebsites.net/*",
+    "https://autoform-chrome-extention-server-csasaeerewb7b9ga.japaneast-01.azurewebsites.net/chrome_extension/*",
     "<all_urls>"
+  ],
+  "optional_permissions": [
+    "enterprise.hardwarePlatform",
+    "enterprise.deviceAttributes"
   ],
   "background": {
     "service_worker": "background.js"
@@ -34,6 +48,13 @@
       "matches": ["<all_urls>"],
       "js": ["content.js"],
       "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["bridge.content.js"],
+      "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true
     }

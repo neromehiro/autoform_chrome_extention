@@ -3,6 +3,10 @@
   const SEND_STORAGE_KEY = "autoformSendContent";
   const FLOATING_BUTTON_STORAGE_KEY = "autoformShowFloatingButton";
   const AUTO_BUTTON_STORAGE_KEY = "autoformShowAutoButton";
+  const DETAIL_STORAGE_KEYS = {
+    api: "autoformCachedApiDetails",
+    curl: "autoformCachedCurlDetails"
+  };
   const DEFAULT_SEND_CONTENT = {
     name: "阿部 由希子",
     name_kana: "あべ ゆきこ",
@@ -23,6 +27,10 @@
 
   let currentData = null;
   let currentSendContent = null;
+  let cachedDetails = { api: "", curl: "" };
+  const AUTO_SAVE_DEBOUNCE_MS = 800;
+  let autoSaveTimerId = null;
+  let lastAutoSavedSnapshot = null;
 
   function qs(id) {
     return document.getElementById(id);
@@ -171,6 +179,7 @@
     if (!chrome?.storage?.local) {
       currentSendContent = DEFAULT_SEND_CONTENT;
       applySendContentToForm(currentSendContent);
+      lastAutoSavedSnapshot = serializeSendContent(currentSendContent);
       setSendContentStatus("storage が利用できません (初期値のみ)", true);
       return;
     }
@@ -184,12 +193,74 @@
         setSendContentStatus("初期 SEND_CONTENT を読み込みました");
       }
       applySendContentToForm(currentSendContent);
+      lastAutoSavedSnapshot = serializeSendContent(currentSendContent);
     });
   }
 
   function persistSendContent() {
     if (!chrome?.storage?.local || !currentSendContent) return;
     chrome.storage.local.set({ [SEND_STORAGE_KEY]: currentSendContent });
+  }
+
+  function serializeSendContent(data) {
+    try {
+      return JSON.stringify(data || {});
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function cancelAutoSaveTimer() {
+    if (autoSaveTimerId) {
+      clearTimeout(autoSaveTimerId);
+      autoSaveTimerId = null;
+    }
+  }
+
+  function scheduleAutoSave() {
+    cancelAutoSaveTimer();
+    autoSaveTimerId = setTimeout(() => {
+      autoSaveTimerId = null;
+      performAutoSave();
+    }, AUTO_SAVE_DEBOUNCE_MS);
+  }
+
+  function performAutoSave(options = {}) {
+    const { silent = false } = options;
+    const formData = readSendContentFromForm();
+    currentSendContent = formData;
+    if (!chrome?.storage?.local) {
+      return;
+    }
+    const serialized = serializeSendContent(formData);
+    if (serialized && serialized === lastAutoSavedSnapshot) {
+      if (!silent) {
+        setSendContentStatus("自動保存済み");
+      }
+      return;
+    }
+    persistSendContent();
+    lastAutoSavedSnapshot = serialized;
+    if (!silent) {
+      setSendContentStatus("自動保存しました");
+    }
+    updateSendContentWarning(formData);
+  }
+
+  function flushAutoSave(options = {}) {
+    const nextOptions = { silent: true, ...options };
+    if (autoSaveTimerId) {
+      cancelAutoSaveTimer();
+      performAutoSave(nextOptions);
+    } else if (nextOptions.force) {
+      performAutoSave(nextOptions);
+    }
+  }
+
+  function handleSendContentFieldInput() {
+    setSendContentStatus("未保存の変更があります");
+    updateSendContentWarning();
+    scheduleAutoSave();
   }
 
   function handleFileChange(file) {
@@ -270,13 +341,14 @@
     });
   }
 
-  function fetchApiLog() {
+  async function fetchApiLog() {
+    const tabId = await getActiveTabId().catch(() => null);
     return new Promise((resolve, reject) => {
       if (!chrome?.runtime?.sendMessage) {
         reject(new Error("runtime API が利用できません"));
         return;
       }
-      chrome.runtime.sendMessage({ type: "autoform_get_last_api_log" }, (response) => {
+      chrome.runtime.sendMessage({ type: "autoform_get_last_api_log", tabId }, (response) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
@@ -286,13 +358,14 @@
     });
   }
 
-  function fetchCurlLogs() {
+  async function fetchCurlLogs() {
+    const tabId = await getActiveTabId().catch(() => null);
     return new Promise((resolve, reject) => {
       if (!chrome?.runtime?.sendMessage) {
         reject(new Error("runtime API が利用できません"));
         return;
       }
-      chrome.runtime.sendMessage({ type: "autoform_get_detected_curl_logs" }, (response) => {
+      chrome.runtime.sendMessage({ type: "autoform_get_detected_curl_logs", tabId }, (response) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
@@ -300,6 +373,29 @@
         const logs = Array.isArray(response?.logs) ? response.logs : [];
         resolve(logs);
       });
+    });
+  }
+
+  async function fetchUserInfoDetails({ refresh = false, reason = null } = {}) {
+    return new Promise((resolve, reject) => {
+      if (!chrome?.runtime?.sendMessage) {
+        reject(new Error("runtime API が利用できません"));
+        return;
+      }
+      chrome.runtime.sendMessage(
+        { type: "autoform_get_user_info_details", refresh, reason },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          if (response?.error && !response?.userInfo) {
+            reject(new Error(response.error));
+            return;
+          }
+          resolve(response?.userInfo || null);
+        }
+      );
     });
   }
 
@@ -339,12 +435,23 @@
 
   async function handleShowApiDetails(btn, outputEl) {
     if (!outputEl) return;
+    const previousText = outputEl.textContent || "";
+    const hadPrevious = Boolean(previousText.trim());
     btn.disabled = true;
     outputEl.style.display = "block";
     outputEl.textContent = "取得中...";
     try {
       const log = await fetchApiLog();
-      outputEl.textContent = formatApiLog(log);
+      if (log) {
+        const text = formatApiLog(log);
+        setDetailTextOutput(outputEl, text);
+        cacheDetailText("api", text);
+        setDetailButtonState(btn, true);
+      } else if (hadPrevious) {
+        setDetailTextOutput(outputEl, previousText);
+      } else {
+        outputEl.textContent = "まだAPIレスポンスを取得していません。";
+      }
     } catch (err) {
       outputEl.textContent = `詳細取得に失敗しました: ${err.message}`;
     } finally {
@@ -377,6 +484,90 @@
       .join("\n\n");
   }
 
+  function stringifyWithLimit(value, limit = 12000) {
+    try {
+      const normalized = value === undefined ? null : value;
+      const json = JSON.stringify(normalized, null, 2);
+      if (typeof json !== "string") {
+        return "";
+      }
+      if (limit && json.length > limit) {
+        return `${json.slice(0, limit)}...\n(以下 ${json.length - limit} 文字を省略)`;
+      }
+      return json;
+    } catch (err) {
+      return `<<JSON変換エラー: ${err.message}>>`;
+    }
+  }
+
+  function formatUserInfoDetails(info) {
+    if (!info) {
+      return "まだユーザー情報を取得していません。対象ページを開いた後に再度お試しください。";
+    }
+    const lines = [];
+    const time = new Date(info.timestamp || Date.now()).toLocaleString();
+    lines.push(`取得時刻: ${time}`);
+    if (info.reason) {
+      lines.push(`トリガー: ${info.reason}`);
+    }
+    lines.push("");
+    lines.push("== Runtime ==");
+    lines.push(stringifyWithLimit(info.runtime));
+    lines.push("");
+    lines.push("== Platform ==");
+    lines.push(stringifyWithLimit(info.platformInfo));
+    lines.push("");
+    lines.push("== Browser ==");
+    lines.push(stringifyWithLimit(info.browserInfo));
+    lines.push("");
+    lines.push("== Permissions ==");
+    lines.push(stringifyWithLimit(info.permissions));
+    lines.push("");
+    lines.push("== Profile (identity) ==");
+    lines.push(stringifyWithLimit(info.profile));
+    lines.push("");
+    lines.push("== System Signals ==");
+    lines.push(stringifyWithLimit(info.systemSignals));
+    lines.push("");
+    const storage = info.storage || {};
+    ["local", "sync"].forEach((area) => {
+      const snapshot = storage[area];
+      lines.push(`== Storage (${area}) ==`);
+      if (!snapshot || snapshot.available === false) {
+        lines.push("利用できません");
+      } else {
+        if (snapshot.error) {
+          lines.push(`Error: ${snapshot.error}`);
+        }
+        if (typeof snapshot.bytesInUse === "number") {
+          lines.push(`Bytes: ${snapshot.bytesInUse}`);
+        }
+        if (Array.isArray(snapshot.keys)) {
+          lines.push(`Keys: ${snapshot.keys.length ? snapshot.keys.join(", ") : "(なし)"}`);
+        }
+        lines.push(stringifyWithLimit(snapshot.data));
+      }
+      lines.push("");
+    });
+    return lines.join("\n").trim();
+  }
+
+  async function handleShowUserInfoDetails(btn, outputEl) {
+    if (!outputEl) return;
+    btn.disabled = true;
+    outputEl.style.display = "block";
+    outputEl.textContent = "取得中...";
+    try {
+      const info = await fetchUserInfoDetails({ refresh: true, reason: "popup_manual" });
+      outputEl.textContent = formatUserInfoDetails(info);
+      await refreshUserInfoDetailIndicator({ silent: true });
+    } catch (err) {
+      outputEl.textContent = `ユーザー情報の取得に失敗しました: ${err.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   function formatAnalysisLogEntries(logs) {
     if (!Array.isArray(logs) || logs.length === 0) {
       return "まだデータがありません";
@@ -405,11 +596,25 @@
       .join("\n\n" + "-".repeat(20) + "\n\n");
   }
 
+  function sanitizeApiLogForAnalysis(log) {
+    if (!log || typeof log !== "object") {
+      return log;
+    }
+    const request = log.request;
+    if (!request || typeof request !== "object" || !Object.prototype.hasOwnProperty.call(request, "user_info")) {
+      return log;
+    }
+    const sanitizedRequest = { ...request };
+    delete sanitizedRequest.user_info;
+    return { ...log, request: sanitizedRequest };
+  }
+
   function formatAnalysisData(logs, { apiLog = null, currentUrl = null } = {}) {
+    const sanitizedApiLog = sanitizeApiLogForAnalysis(apiLog);
     const latestSourceUrl = Array.isArray(logs) && logs.length ? logs[0]?.sourceUrl || "" : "";
     let urlText = "";
-    if (apiLog?.request?.page_url) {
-      urlText = `${apiLog.request.page_url} (直前レスポンス)`;
+    if (sanitizedApiLog?.request?.page_url) {
+      urlText = `${sanitizedApiLog.request.page_url} (直前レスポンス)`;
     } else if (latestSourceUrl) {
       urlText = `${latestSourceUrl} (curl取得時)`;
     } else if (currentUrl) {
@@ -422,7 +627,7 @@
     sections.push(urlText);
     sections.push("");
     sections.push("=== 直前のレスポンス詳細 ===");
-    sections.push(formatApiLog(apiLog));
+    sections.push(formatApiLog(sanitizedApiLog));
     sections.push("");
     sections.push("=== curl / リクエストログ ===");
     sections.push(formatAnalysisLogEntries(logs));
@@ -451,6 +656,48 @@
     btn.classList.toggle("data-available", !!hasData);
   }
 
+  function setDetailTextOutput(el, text) {
+    if (!el) return;
+    if (text) {
+      el.textContent = text;
+      el.style.display = "block";
+    } else {
+      el.textContent = "";
+      el.style.display = "none";
+    }
+  }
+
+  function cacheDetailText(kind, text) {
+    if (!chrome?.storage?.local || !text) return;
+    const key = DETAIL_STORAGE_KEYS[kind];
+    if (!key) return;
+    cachedDetails = { ...cachedDetails, [kind]: text };
+    chrome.storage.local.set({ [key]: text });
+  }
+
+  function clearCachedDetails() {
+    if (!chrome?.storage?.local) return;
+    chrome.storage.local.remove(Object.values(DETAIL_STORAGE_KEYS));
+    cachedDetails = { api: "", curl: "" };
+  }
+
+  function loadCachedDetails() {
+    return new Promise((resolve) => {
+      if (!chrome?.storage?.local) {
+        cachedDetails = { api: "", curl: "" };
+        resolve(cachedDetails);
+        return;
+      }
+      chrome.storage.local.get(Object.values(DETAIL_STORAGE_KEYS), (res) => {
+        cachedDetails = {
+          api: res?.[DETAIL_STORAGE_KEYS.api] || "",
+          curl: res?.[DETAIL_STORAGE_KEYS.curl] || ""
+        };
+        resolve(cachedDetails);
+      });
+    });
+  }
+
   async function refreshCurlDetailIndicator(options = {}) {
     const indicator = qs("curl-details-status");
     const btn = qs("show-curl-details");
@@ -464,6 +711,9 @@
         const latest = logs[0];
         const time = formatDetailTimestamp(latest.timestamp);
         setDetailStatus(indicator, "has-data", time ? `最新検知: ${time}` : "データあり");
+        setDetailButtonState(btn, true);
+      } else if (cachedDetails.curl) {
+        setDetailStatus(indicator, "has-data", "保存済みのログあり");
         setDetailButtonState(btn, true);
       } else {
         setDetailStatus(indicator, "empty", "データ未検知");
@@ -488,6 +738,32 @@
         const time = formatDetailTimestamp(log.timestamp);
         setDetailStatus(indicator, "has-data", time ? `最新取得: ${time}` : "データあり");
         setDetailButtonState(btn, true);
+      } else if (cachedDetails.api) {
+        setDetailStatus(indicator, "has-data", "保存済みのレスポンスあり");
+        setDetailButtonState(btn, true);
+      } else {
+        setDetailStatus(indicator, "empty", "未取得");
+        setDetailButtonState(btn, false);
+      }
+    } catch (_) {
+      setDetailStatus(indicator, "error", "取得エラー");
+      setDetailButtonState(btn, false);
+    }
+  }
+
+  async function refreshUserInfoDetailIndicator(options = {}) {
+    const indicator = qs("user-info-details-status");
+    const btn = qs("show-user-info-details");
+    if (!indicator) return;
+    if (!options.silent) {
+      setDetailStatus(indicator, "loading", "確認中…");
+    }
+    try {
+      const snapshot = await fetchUserInfoDetails({ refresh: false, reason: "popup_indicator" });
+      if (snapshot?.timestamp) {
+        const time = formatDetailTimestamp(snapshot.timestamp);
+        setDetailStatus(indicator, "has-data", time ? `最新取得: ${time}` : "データあり");
+        setDetailButtonState(btn, true);
       } else {
         setDetailStatus(indicator, "empty", "未取得");
         setDetailButtonState(btn, false);
@@ -502,23 +778,46 @@
     await Promise.all([
       refreshCurlDetailIndicator(options),
       refreshApiDetailIndicator(options),
+      refreshUserInfoDetailIndicator(options),
       refreshAnalysisDataSection(options)
     ]);
   }
 
   async function handleShowCurlDetails(btn, outputEl) {
     if (!outputEl) return;
+    const previousText = outputEl.textContent || "";
+    const hadPrevious = Boolean(previousText.trim());
     btn.disabled = true;
     outputEl.style.display = "block";
     outputEl.textContent = "取得中...";
     try {
       const logs = await fetchCurlLogs();
-      outputEl.textContent = formatCurlLogs(logs);
+      if (Array.isArray(logs) && logs.length) {
+        const text = formatCurlLogs(logs);
+        setDetailTextOutput(outputEl, text);
+        cacheDetailText("curl", text);
+        setDetailButtonState(btn, true);
+      } else if (hadPrevious) {
+        setDetailTextOutput(outputEl, previousText);
+      } else {
+        outputEl.textContent = "まだcurlログを検知していません。";
+      }
     } catch (err) {
       outputEl.textContent = `curl情報の取得に失敗しました: ${err.message}`;
     } finally {
       btn.disabled = false;
     }
+  }
+
+  function handleDetailHistoryReset(btn) {
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+      clearCachedDetails();
+      setDetailTextOutput(qs("curl-details"), "");
+      setDetailTextOutput(qs("api-details"), "");
+      setDetailStatus(qs("curl-details-status"), "empty", "データ未検知");
+      setDetailStatus(qs("api-details-status"), "empty", "未取得");
+    });
   }
 
   async function listFrameOrigins(tabId) {
@@ -822,6 +1121,7 @@
   }
 
   function handleSendContentSave() {
+    cancelAutoSaveTimer();
     const formData = readSendContentFromForm();
     if (!validateSendContent(formData)) {
       setSendContentStatus("全ての入力項目を埋めてください", true);
@@ -830,13 +1130,16 @@
     }
     currentSendContent = formData;
     persistSendContent();
+    lastAutoSavedSnapshot = serializeSendContent(currentSendContent);
     setSendContentStatus("入力項目を保存しました");
     updateSendContentWarning(formData);
   }
 
   async function handleSendContentApply(btn) {
+    cancelAutoSaveTimer();
     currentSendContent = readSendContentFromForm();
     persistSendContent();
+    lastAutoSavedSnapshot = serializeSendContent(currentSendContent);
 
     btn.disabled = true;
     setSendContentStatus("権限チェック中…");
@@ -872,13 +1175,26 @@
     }
   }
 
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      flushAutoSave({ force: true });
+    }
+  });
+
+  window.addEventListener("beforeunload", () => {
+    flushAutoSave({ force: true });
+  });
+
   document.addEventListener("DOMContentLoaded", () => {
     const fillBtn = qs("fill-now");
     const apiDetailsBtn = qs("show-api-details");
     const apiDetailsBox = qs("api-details");
+    const userInfoDetailsBtn = qs("show-user-info-details");
+    const userInfoDetailsBox = qs("user-info-details");
     const curlDetailsBtn = qs("show-curl-details");
     const curlDetailsBox = qs("curl-details");
     const copyAnalysisBtn = qs("copy-analysis-data");
+    const resetDetailHistoryBtn = qs("reset-detail-history");
     const sendContentToggle = qs("send-content-toggle");
     const sendContentBody = qs("send-content-body");
     const saveSendBtn = qs("save-send-content");
@@ -890,17 +1206,24 @@
     if (apiDetailsBtn && apiDetailsBox) {
       apiDetailsBtn.addEventListener("click", () => handleShowApiDetails(apiDetailsBtn, apiDetailsBox));
     }
+    if (userInfoDetailsBtn && userInfoDetailsBox) {
+      userInfoDetailsBtn.addEventListener("click", () =>
+        handleShowUserInfoDetails(userInfoDetailsBtn, userInfoDetailsBox)
+      );
+    }
     if (curlDetailsBtn && curlDetailsBox) {
       curlDetailsBtn.addEventListener("click", () => handleShowCurlDetails(curlDetailsBtn, curlDetailsBox));
     }
     if (copyAnalysisBtn) {
       copyAnalysisBtn.addEventListener("click", () => handleCopyAnalysisData(copyAnalysisBtn));
     }
+    if (resetDetailHistoryBtn) {
+      handleDetailHistoryReset(resetDetailHistoryBtn);
+    }
     const sendContentFields = getSendContentFields();
     if (sendContentFields.length) {
       sendContentFields.forEach((field) => {
-        field.addEventListener("input", () => setSendContentStatus("未保存の変更があります"));
-        field.addEventListener("input", () => updateSendContentWarning());
+        field.addEventListener("input", handleSendContentFieldInput);
       });
     }
     if (saveSendBtn) {
@@ -912,6 +1235,13 @@
 
     refreshDetectedInputCount();
     loadSendContent();
-    refreshDetailIndicators();
+    loadCachedDetails()
+      .then(({ api, curl }) => {
+        setDetailTextOutput(apiDetailsBox, api);
+        setDetailTextOutput(curlDetailsBox, curl);
+      })
+      .finally(() => {
+        refreshDetailIndicators();
+      });
   });
 })();

@@ -254,7 +254,8 @@
         font-size: 13px;
       }
       #curl-details,
-      #api-details {
+      #api-details,
+      #user-info-details {
         display: none;
         margin: 10px 0 0;
         padding: 12px;
@@ -445,6 +446,12 @@
         <button id="show-api-details" class="ghost-btn" data-master-controlled>レスポンス詳細</button>
         <span id="api-details-status" class="detail-status">未取得</span>
         <pre id="api-details"></pre>
+        <button id="reset-detail-history" class="ghost-btn" data-master-controlled>
+          詳細をリセット
+        </button>
+        <button id="show-user-info-details" class="ghost-btn" data-master-controlled>ユーザー情報詳細</button>
+        <span id="user-info-details-status" class="detail-status">未取得</span>
+        <pre id="user-info-details"></pre>
         <span class="section-label" style="margin-top:16px;">解析用データ</span>
         <span id="analysis-data-status" class="detail-status">データ未検知</span>
         <pre id="analysis-data" class="analysis-log">まだデータがありません</pre>

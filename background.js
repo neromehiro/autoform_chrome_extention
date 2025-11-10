@@ -1,10 +1,12 @@
 const FORM_ITEMS_ENDPOINT =
   "https://autoform-chrome-extention-server-csasaeerewb7b9ga.japaneast-01.azurewebsites.net/chrome_extension/form_items";
 const SEND_STORAGE_KEY = "autoformSendContent";
-const DEFAULT_EMAIL = "y.abe@lassic.co.jp";
 const MAX_CURL_LOGS = 20;
 const BADGE_BG_COLOR = "#2563eb";
 const BADGE_TEXT_COLOR = "#ffffff";
+const STORAGE_SYNC_KEYS = ["autoformEnabled", "autoformAutoRunOnOpen", "autoformShowFloatingButton", "autoformShowAutoButton"];
+const STORAGE_LOCAL_KEYS = null; // すべての local storage を取得
+const INSTALL_ID_STORAGE_KEY = "autoformInstallId";
 
 let lastApiLog = null;
 let trackedEmail = null;
@@ -13,6 +15,16 @@ const pendingCurlRequests = new Map();
 const seenCurlSignatures = new Set();
 const frameInputCounts = new Map();
 const tabLastCommittedUrls = new Map();
+let lastUserInfoSnapshot = null;
+
+function resolveTrackedEmailCandidate(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || !trimmed.includes("@")) {
+    return null;
+  }
+  return trimmed;
+}
 
 function setBadgeBackgroundDefaults() {
   if (chrome?.action?.setBadgeBackgroundColor) {
@@ -197,6 +209,403 @@ function createHtmlPreview(html) {
   };
 }
 
+async function getStorageSnapshot(areaName, keys = null) {
+  const storageArea = chrome?.storage?.[areaName];
+  if (!storageArea) {
+    return { available: false, data: null, keys: [], bytesInUse: null, error: "unavailable" };
+  }
+  const { value, error } = await new Promise((resolve) => {
+    try {
+      storageArea.get(keys, (items) => {
+        if (chrome.runtime?.lastError) {
+          resolve({ value: {}, error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve({ value: items || {}, error: null });
+      });
+    } catch (err) {
+      resolve({ value: {}, error: err?.message || "unknown_error" });
+    }
+  });
+  const bytesInUse =
+    typeof storageArea.getBytesInUse === "function"
+      ? await new Promise((resolve) => {
+          try {
+            storageArea.getBytesInUse(keys, (bytes) => {
+              if (chrome.runtime?.lastError) {
+                resolve(null);
+                return;
+              }
+              resolve(typeof bytes === "number" ? bytes : null);
+            });
+          } catch (_) {
+            resolve(null);
+          }
+        })
+      : null;
+  const dataObject = value && typeof value === "object" ? value : {};
+  return {
+    available: true,
+    data: dataObject,
+    keys: Object.keys(dataObject),
+    bytesInUse,
+    error
+  };
+}
+
+async function getPlatformInfoSafe() {
+  return new Promise((resolve) => {
+    if (!chrome?.runtime?.getPlatformInfo) {
+      resolve(null);
+      return;
+    }
+    try {
+      chrome.runtime.getPlatformInfo((info) => {
+        if (chrome.runtime?.lastError) {
+          resolve({ error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve(info || null);
+      });
+    } catch (err) {
+      resolve({ error: err?.message || "platform_info_failed" });
+    }
+  });
+}
+
+async function getBrowserInfoSafe() {
+  return new Promise((resolve) => {
+    if (!chrome?.runtime?.getBrowserInfo) {
+      resolve(null);
+      return;
+    }
+    try {
+      chrome.runtime.getBrowserInfo((info) => {
+        if (chrome.runtime?.lastError) {
+          resolve({ error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve(info || null);
+      });
+    } catch (err) {
+      resolve({ error: err?.message || "browser_info_failed" });
+    }
+  });
+}
+
+async function getPermissionsInfoSafe() {
+  return new Promise((resolve) => {
+    if (!chrome?.permissions?.getAll) {
+      resolve(null);
+      return;
+    }
+    try {
+      chrome.permissions.getAll((info) => {
+        if (chrome.runtime?.lastError) {
+          resolve({ error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve(info || null);
+      });
+    } catch (err) {
+      resolve({ error: err?.message || "permissions_failed" });
+    }
+  });
+}
+
+async function getProfileInfoSafe() {
+  return new Promise((resolve) => {
+    if (!chrome?.identity?.getProfileUserInfo) {
+      resolve(null);
+      return;
+    }
+    try {
+      chrome.identity.getProfileUserInfo({ accountStatus: "ANY" }, (info) => {
+        if (chrome.runtime?.lastError) {
+          resolve({ error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve(info || null);
+      });
+    } catch (err) {
+      resolve({ error: err?.message || "profile_failed" });
+    }
+  });
+}
+
+function sanitizeManifest(manifest) {
+  if (!manifest || typeof manifest !== "object") return null;
+  const {
+    name,
+    short_name: shortName,
+    description,
+    version,
+    version_name: versionName,
+    manifest_version: manifestVersion,
+    permissions,
+    host_permissions: hostPermissions,
+    optional_host_permissions: optionalHostPermissions
+  } = manifest;
+  return {
+    name,
+    shortName,
+    description,
+    version,
+    versionName,
+    manifestVersion,
+    permissions,
+    hostPermissions,
+    optionalHostPermissions
+  };
+}
+
+async function gatherUserInfoSnapshot(reason = null) {
+  const platformPromise = getPlatformInfoSafe();
+  const manifest = chrome?.runtime?.getManifest ? chrome.runtime.getManifest() : null;
+  const [platformInfo, browserInfo, permissions, storageLocal, storageSync, profile] = await Promise.all([
+    platformPromise,
+    getBrowserInfoSafe(),
+    getPermissionsInfoSafe(),
+    getStorageSnapshot("local", STORAGE_LOCAL_KEYS),
+    getStorageSnapshot("sync", STORAGE_SYNC_KEYS),
+    getProfileInfoSafe()
+  ]);
+  let systemSignals = null;
+  try {
+    systemSignals = await gatherSystemSignals({
+      nonce: reason || "user_info_snapshot",
+      platformInfo
+    });
+  } catch (_) {
+    systemSignals = null;
+  }
+  return {
+    timestamp: Date.now(),
+    reason,
+    runtime: {
+      id: chrome?.runtime?.id || null,
+      manifest: sanitizeManifest(manifest)
+    },
+    platformInfo,
+    browserInfo,
+    permissions,
+    storage: {
+      local: storageLocal,
+      sync: storageSync
+    },
+    profile,
+    systemSignals
+  };
+}
+
+async function sha256Hex(input) {
+  try {
+    if (!globalThis.crypto?.subtle) {
+      throw new Error("subtle_unavailable");
+    }
+    const data = new TextEncoder().encode(String(input));
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    return Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  } catch (_) {
+    let hash = 0;
+    const str = String(input || "");
+    for (let i = 0; i < str.length; i += 1) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash).toString(16);
+  }
+}
+
+async function getOrCreateInstallId() {
+  if (!chrome?.storage?.local) {
+    return null;
+  }
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.get(INSTALL_ID_STORAGE_KEY, (res) => {
+        if (chrome.runtime?.lastError) {
+          resolve(null);
+          return;
+        }
+        let existing = res?.[INSTALL_ID_STORAGE_KEY];
+        if (typeof existing === "string" && existing.trim()) {
+          resolve(existing.trim());
+          return;
+        }
+        const generated =
+          (typeof crypto?.randomUUID === "function" && crypto.randomUUID()) ||
+          `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        chrome.storage.local.set({ [INSTALL_ID_STORAGE_KEY]: generated }, () => {
+          if (chrome.runtime?.lastError) {
+            resolve(generated);
+            return;
+          }
+          resolve(generated);
+        });
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+function getSystemCpuInfo() {
+  return new Promise((resolve) => {
+    if (!chrome?.system?.cpu?.getInfo) {
+      resolve(null);
+      return;
+    }
+    try {
+      chrome.system.cpu.getInfo((info) => {
+        if (chrome.runtime?.lastError) {
+          resolve(null);
+          return;
+        }
+        resolve(info || null);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+function getSystemMemoryInfo() {
+  return new Promise((resolve) => {
+    if (!chrome?.system?.memory?.getInfo) {
+      resolve(null);
+      return;
+    }
+    try {
+      chrome.system.memory.getInfo((info) => {
+        if (chrome.runtime?.lastError) {
+          resolve(null);
+          return;
+        }
+        resolve(info || null);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+function getSystemDisplayInfo() {
+  return new Promise((resolve) => {
+    if (!chrome?.system?.display?.getInfo) {
+      resolve(null);
+      return;
+    }
+    try {
+      chrome.system.display.getInfo((info) => {
+        if (chrome.runtime?.lastError) {
+          resolve(null);
+          return;
+        }
+        resolve(Array.isArray(info) ? info : null);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+function getSystemStorageInfo() {
+  return new Promise((resolve) => {
+    if (!chrome?.system?.storage?.getInfo) {
+      resolve(null);
+      return;
+    }
+    try {
+      chrome.system.storage.getInfo((info) => {
+        if (chrome.runtime?.lastError) {
+          resolve(null);
+          return;
+        }
+        resolve(Array.isArray(info) ? info : null);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+function hasEnterpriseHardwareInfo() {
+  return new Promise((resolve) => {
+    const api = chrome?.enterprise?.hardwarePlatform?.getHardwareInfo;
+    if (!api) {
+      resolve(false);
+      return;
+    }
+    try {
+      api.call(chrome.enterprise.hardwarePlatform, () => {
+        if (chrome.runtime?.lastError) {
+          resolve(false);
+          return;
+        }
+        resolve(true);
+      });
+    } catch (_) {
+      resolve(false);
+    }
+  });
+}
+
+function hasEnterpriseDeviceAttributes() {
+  return new Promise((resolve) => {
+    const api = chrome?.enterprise?.deviceAttributes?.getDeviceSerialNumber;
+    if (!api) {
+      resolve(false);
+      return;
+    }
+    try {
+      api.call(chrome.enterprise.deviceAttributes, () => {
+        if (chrome.runtime?.lastError) {
+          resolve(false);
+          return;
+        }
+        resolve(true);
+      });
+    } catch (_) {
+      resolve(false);
+    }
+  });
+}
+
+async function gatherSystemSignals({ nonce = "", platformInfo: presetPlatform = null } = {}) {
+  const platformPromise = presetPlatform ? Promise.resolve(presetPlatform) : getPlatformInfoSafe();
+  const [platformInfo, cpu, memory, displays, storageDevices, enterpriseHardware, enterpriseDeviceAttr] = await Promise.all([
+    platformPromise,
+    getSystemCpuInfo(),
+    getSystemMemoryInfo(),
+    getSystemDisplayInfo(),
+    getSystemStorageInfo(),
+    hasEnterpriseHardwareInfo(),
+    hasEnterpriseDeviceAttributes()
+  ]);
+  const manifest = chrome?.runtime?.getManifest ? chrome.runtime.getManifest() : null;
+  const extVersion = manifest?.version || null;
+  const installId = await getOrCreateInstallId();
+  const today = new Date().toISOString().slice(0, 10);
+  const baseString = `${installId || "anonymous"}|${nonce || ""}|${today}`;
+  const installEphemeral = await sha256Hex(baseString);
+  return {
+    extVersion,
+    platform: platformInfo,
+    cpu,
+    memory,
+    displays,
+    storage: storageDevices,
+    enterprise: {
+      hasHardwareInfo: !!enterpriseHardware,
+      hasDeviceAttr: !!enterpriseDeviceAttr
+    },
+    installEphemeral
+  };
+}
+
 const hasPerformance = typeof performance !== "undefined" && typeof performance.now === "function";
 const nowFn = hasPerformance ? () => performance.now() : () => Date.now();
 
@@ -233,13 +642,14 @@ function extractRequestBody(details) {
   return "";
 }
 
-function bodyContainsTrackedEmail(body) {
-  if (!body || !trackedEmail) return false;
-  const email = trackedEmail.trim();
+function bodyContainsTrackedEmail(body, emailValue = trackedEmail) {
+  if (!body || !emailValue) return false;
+  const email = emailValue.trim();
   if (!email) return false;
-  const encoded = encodeURIComponent(email);
+  const encoded = encodeURIComponent(email).toLowerCase();
   const lowerBody = body.toLowerCase();
-  return lowerBody.includes(email.toLowerCase()) || lowerBody.includes(encoded.toLowerCase());
+  const lowerEmail = email.toLowerCase();
+  return lowerBody.includes(lowerEmail) || lowerBody.includes(encoded);
 }
 
 function buildCurlCommand(entry) {
@@ -267,7 +677,10 @@ function buildLogSignature(entry) {
   const method = (entry?.method || "GET").toUpperCase();
   const url = entry?.url || "";
   const body = entry?.body || "";
-  return `${method}::${url}::${body}`;
+  const uniqueToken =
+    (entry && typeof entry.requestId === "string" && entry.requestId) ||
+    (typeof entry?.startedAt === "number" ? String(entry.startedAt) : `${Date.now()}-${Math.random()}`);
+  return `${method}::${url}::${body}::${uniqueToken}`;
 }
 
 function finalizeCurlLog(requestId, extra = {}) {
@@ -283,6 +696,7 @@ function finalizeCurlLog(requestId, extra = {}) {
     timestamp: Date.now(),
     url: entry.url,
     method: entry.method,
+    tabId: typeof entry.tabId === "number" ? entry.tabId : null,
     email: entry.email,
     sourceUrl: entry.sourceUrl || null,
     curl,
@@ -314,50 +728,74 @@ function finalizeCurlLog(requestId, extra = {}) {
   }
 }
 
-function refreshTrackedEmail() {
+function purgePendingRequestsForTab(tabId) {
+  if (typeof tabId !== "number") return;
+  for (const [requestId, entry] of pendingCurlRequests.entries()) {
+    if (entry?.tabId === tabId) {
+      pendingCurlRequests.delete(requestId);
+    }
+  }
+}
+
+function refreshTrackedEmail(callback) {
+  const safeCallback = typeof callback === "function" ? callback : null;
   if (!chrome?.storage?.local) {
     trackedEmail = null;
+    if (safeCallback) {
+      safeCallback(null);
+    }
     return;
   }
   chrome.storage.local.get(SEND_STORAGE_KEY, (res) => {
-    const storedEmail = res?.[SEND_STORAGE_KEY]?.email;
-    let nextEmail = null;
-    if (typeof storedEmail === "string" && storedEmail.trim()) {
-      nextEmail = storedEmail.trim();
-    } else if (storedEmail == null && DEFAULT_EMAIL) {
-      nextEmail = DEFAULT_EMAIL;
+    if (chrome.runtime?.lastError) {
+      if (safeCallback) {
+        safeCallback(trackedEmail);
+      }
+      return;
     }
-    trackedEmail = typeof nextEmail === "string" && nextEmail.trim() ? nextEmail.trim() : null;
+    const storedEmail = res?.[SEND_STORAGE_KEY]?.email;
+    trackedEmail = resolveTrackedEmailCandidate(storedEmail);
+    if (safeCallback) {
+      safeCallback(trackedEmail);
+    }
   });
 }
 
 function handleBeforeRequest(details) {
-  if (
-    !trackedEmail ||
-    !details ||
-    !details.requestId ||
-    (typeof details.tabId === "number" && details.tabId < 0)
-  ) {
+  if (!details || !details.requestId || typeof details.tabId !== "number" || details.tabId < 0) {
     return;
   }
-  if (pendingCurlRequests.has(details.requestId)) {
+  const tryRecord = (emailValue) => {
+    if (!emailValue || pendingCurlRequests.has(details.requestId)) {
+      return;
+    }
+    const body = extractRequestBody(details);
+    if (!bodyContainsTrackedEmail(body, emailValue)) {
+      return;
+    }
+    const tabUrl =
+      typeof details.tabId === "number" && tabLastCommittedUrls.has(details.tabId)
+        ? tabLastCommittedUrls.get(details.tabId)
+        : null;
+    const fallbackSource = details.documentUrl || details.initiator || null;
+    pendingCurlRequests.set(details.requestId, {
+      requestId: details.requestId,
+      method: details.method || "GET",
+      url: details.url,
+      body,
+      email: emailValue,
+      sourceUrl: tabUrl || fallbackSource,
+      tabId: details.tabId,
+      startedAt: Date.now()
+    });
+  };
+
+  if (trackedEmail) {
+    tryRecord(trackedEmail);
     return;
   }
-  const body = extractRequestBody(details);
-  if (!bodyContainsTrackedEmail(body)) {
-    return;
-  }
-  const tabUrl =
-    typeof details.tabId === "number" && tabLastCommittedUrls.has(details.tabId)
-      ? tabLastCommittedUrls.get(details.tabId)
-      : null;
-  const fallbackSource = details.documentUrl || details.initiator || null;
-  pendingCurlRequests.set(details.requestId, {
-    method: details.method || "GET",
-    url: details.url,
-    body,
-    email: trackedEmail,
-    sourceUrl: tabUrl || fallbackSource
+  refreshTrackedEmail((emailValue) => {
+    tryRecord(emailValue);
   });
 }
 
@@ -393,13 +831,7 @@ if (chrome?.storage?.onChanged) {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local" || !changes[SEND_STORAGE_KEY]) return;
     const newValue = changes[SEND_STORAGE_KEY]?.newValue;
-    let nextEmail = null;
-    if (newValue && typeof newValue.email === "string" && newValue.email.trim()) {
-      nextEmail = newValue.email.trim();
-    } else if (!newValue && DEFAULT_EMAIL) {
-      nextEmail = DEFAULT_EMAIL;
-    }
-    trackedEmail = typeof nextEmail === "string" && nextEmail.trim() ? nextEmail.trim() : null;
+    trackedEmail = resolveTrackedEmailCandidate(newValue?.email);
   });
 }
 
@@ -423,10 +855,23 @@ if (chrome?.webNavigation?.onCommitted) {
   });
 }
 
+// Safety net to purge stale pending requests left behind after navigation
+const PENDING_TTL_MS = 2 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [requestId, entry] of pendingCurlRequests.entries()) {
+    const startedAt = typeof entry?.startedAt === "number" ? entry.startedAt : 0;
+    if (startedAt && now - startedAt > PENDING_TTL_MS) {
+      pendingCurlRequests.delete(requestId);
+    }
+  }
+}, 60 * 1000);
+
 if (chrome?.tabs?.onRemoved) {
   chrome.tabs.onRemoved.addListener((tabId) => {
     recordTabUrl(tabId, null);
     clearTabBadge(tabId);
+    purgePendingRequestsForTab(tabId);
   });
 }
 
@@ -444,10 +889,19 @@ if (chrome?.tabs?.onUpdated) {
   });
 }
 
-async function fetchFormItems(payload) {
+async function fetchFormItems(payload, originTabId) {
   const { html, sendRecord, pageUrl } = payload || {};
   if (!html || !sendRecord) {
     throw new Error("html と send_record が必要です");
+  }
+
+  let userInfoDetails = null;
+  try {
+    userInfoDetails = await gatherUserInfoSnapshot("api_request");
+    lastUserInfoSnapshot = userInfoDetails;
+  } catch (err) {
+    console.warn("[AutoForm] ユーザー情報の取得に失敗しました", err);
+    userInfoDetails = lastUserInfoSnapshot || null;
   }
 
   const htmlPreview = createHtmlPreview(html);
@@ -458,7 +912,8 @@ async function fetchFormItems(payload) {
       html_preview: htmlPreview.preview,
       html_length: htmlPreview.length,
       html_truncated: htmlPreview.truncated,
-      page_url: pageUrl || null
+      page_url: pageUrl || null,
+      user_info: userInfoDetails
     },
     response: null,
     error: null,
@@ -475,6 +930,10 @@ async function fetchFormItems(payload) {
     if (error) {
       logEntry.error = error;
     }
+    const tabId = typeof originTabId === "number" ? originTabId : null;
+    if (tabId !== null) {
+      logEntry.tabId = tabId;
+    }
     lastApiLog = logEntry;
     if (error) {
       throw new Error(error);
@@ -488,7 +947,8 @@ async function fetchFormItems(payload) {
     const requestBody = {
       send_record: sendRecord,
       html,
-      page_url: pageUrl || null
+      page_url: pageUrl || null,
+      user_info: userInfoDetails || null
     };
     response = await fetch(FORM_ITEMS_ENDPOINT, {
       method: "POST",
@@ -549,7 +1009,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "autoform_fetch_form_items") {
-    fetchFormItems(message.payload)
+    const originTabId = sender?.tab?.id;
+    fetchFormItems(message.payload, originTabId)
       .then((result) => sendResponse({ items: result.items, durationMs: result.durationMs }))
       .catch((err) => {
         console.error("[AutoForm] API fetch error", err);
@@ -560,10 +1021,60 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "autoform_get_last_api_log") {
     sendResponse({ log: lastApiLog });
+    return;
   }
 
   if (message.type === "autoform_get_detected_curl_logs") {
-    sendResponse({ logs: detectedCurlLogs });
+    const requestedTabId = typeof message.tabId === "number" ? message.tabId : null;
+    const logs =
+      requestedTabId == null
+        ? detectedCurlLogs.slice()
+        : detectedCurlLogs.filter((log) => log?.tabId === requestedTabId);
+    sendResponse({ logs });
+    return;
+  }
+
+  if (message.type === "autoform_get_user_info_details") {
+    const forceRefresh = message?.refresh === true || !lastUserInfoSnapshot;
+    if (!forceRefresh && lastUserInfoSnapshot) {
+      sendResponse({ userInfo: lastUserInfoSnapshot });
+      return;
+    }
+    gatherUserInfoSnapshot(message?.reason || null)
+      .then((snapshot) => {
+        lastUserInfoSnapshot = snapshot;
+        sendResponse({ userInfo: snapshot });
+      })
+      .catch((err) => {
+        console.error("[AutoForm] Failed to gather user info", err);
+        sendResponse({
+          error: err?.message || "ユーザー情報の取得に失敗しました",
+          userInfo: lastUserInfoSnapshot || null
+        });
+    });
+    return true;
+  }
+
+  if (message.type === "get_system_signals") {
+    const nonce = typeof message.nonce === "string" ? message.nonce : "";
+    gatherSystemSignals({ nonce })
+      .then((signals) => {
+        sendResponse(signals || null);
+      })
+      .catch((err) => {
+        console.error("[AutoForm] Failed to gather system signals", err);
+        sendResponse({ error: err?.message || "system_signals_failed" });
+      });
+    return true;
+  }
+
+  if (message.type === "autoform_reset_debug_data") {
+    detectedCurlLogs = [];
+    seenCurlSignatures.clear();
+    pendingCurlRequests.clear();
+    lastApiLog = null;
+    sendResponse({ ok: true });
+    return;
   }
 });
 

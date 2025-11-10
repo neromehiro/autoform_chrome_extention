@@ -11,6 +11,7 @@
     "range", "date", "time", "color", "image"
   ]);
   const MIN_INPUTS_FOR_AUTO = 3;
+  const MIN_FORM_CONTROLS_FOR_REMOTE = 3;
   const KNOWN_MESSAGE_TYPES = new Set([
     "autoform_execute_json",
     "autoform_manual_fill",
@@ -392,6 +393,21 @@
   async function performRemoteFill() {
     if (remoteFillPromise) return remoteFillPromise;
     remoteFillPromise = (async () => {
+      const formsCount = (() => {
+        try {
+          return document.forms ? document.forms.length : 0;
+        } catch (_) {
+          return 0;
+        }
+      })();
+      const controlCount = countFormControls();
+      if (formsCount === 0 && controlCount < MIN_FORM_CONTROLS_FOR_REMOTE) {
+        console.info("[AutoForm] Skipping API fetch: insufficient form controls detected", {
+          formsCount,
+          controlCount
+        });
+        return { error: "フォーム候補が見つからないためAPIリクエストをスキップしました" };
+      }
       const html = getPageHtml();
       if (!html) {
         return { error: "HTMLが取得できませんでした" };
@@ -537,6 +553,15 @@
     return count;
   }
 
+  function countFormControls(root = document) {
+    const scope = root && typeof root.querySelectorAll === "function" ? root : document;
+    try {
+      return scope.querySelectorAll("input, textarea, select").length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   function dispatchInputCount(count) {
     if (!chrome?.runtime?.sendMessage) return;
     try {
@@ -616,17 +641,29 @@
       }
       if (type === "checkbox") {
         const shouldCheck = isTruthySelectionValue(value);
-        node.checked = shouldCheck;
-        node.dispatchEvent(new Event("input", { bubbles: true }));
-        node.dispatchEvent(new Event("change", { bubbles: true }));
+        if (node.disabled) return false;
+        if (node.checked !== shouldCheck) {
+          const label = findAssociatedLabel(node);
+          if (!(label ? clickLikeUser(label) : clickLikeUser(node))) {
+            node.checked = shouldCheck;
+            node.dispatchEvent(new Event("input", { bubbles: true }));
+            node.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        }
         node.dataset.autoformFilled = "1";
         return true;
       }
       if (type === "radio") {
         const shouldSelect = isTruthySelectionValue(value);
-        node.checked = shouldSelect;
-        node.dispatchEvent(new Event("input", { bubbles: true }));
-        node.dispatchEvent(new Event("change", { bubbles: true }));
+        if (node.disabled) return false;
+        if (shouldSelect && !node.checked) {
+          const label = findAssociatedLabel(node);
+          if (!(label ? clickLikeUser(label) : clickLikeUser(node))) {
+            node.checked = true;
+            node.dispatchEvent(new Event("input", { bubbles: true }));
+            node.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        }
         node.dataset.autoformFilled = "1";
         return true;
       }
@@ -703,24 +740,31 @@
 
   function shouldClickNode(node, condition, value, fieldType = "") {
     if (!node) return false;
-    const normalizedFieldType = (fieldType || "").toLowerCase();
-    if (normalizedFieldType && normalizedFieldType !== "button") {
-      return false;
-    }
     const targetCondition = String(condition || "").toLowerCase();
     const valueStr = typeof value === "string" ? value.toLowerCase() : "";
     const wantsClick = targetCondition.includes("click") || valueStr === "click";
     if (!wantsClick) return false;
-
-    const tag = (node.tagName || "").toLowerCase();
-    if (tag === "button") return false;
-    if (node instanceof HTMLInputElement) {
-      const type = node.type.toLowerCase();
-      if (type === "button" || type === "submit" || type === "reset") {
-        return false;
-      }
-    }
+    const type = node instanceof HTMLInputElement ? node.type.toLowerCase() : "";
+    if (["submit", "reset", "button", "file", "image"].includes(type)) return false;
     return true;
+  }
+
+  function findAssociatedLabel(input) {
+    if (!(input instanceof HTMLInputElement)) return null;
+    const byFor =
+      input.id ? document.querySelector(`label[for="${cssEscape(input.id)}"]`) : null;
+    return input.closest("label") || byFor || null;
+  }
+
+  function clickLikeUser(target) {
+    try {
+      target.focus();
+      target.click();
+      return true;
+    } catch (err) {
+      console.warn("[AutoForm] 擬似クリックに失敗:", err);
+      return false;
+    }
   }
 
   function applyJsonInstructions(items) {

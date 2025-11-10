@@ -1,0 +1,308 @@
+<!-- redirect/template.html -->
+<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">
+  <title>Redirecting…</title>
+  <meta http-equiv="refresh" content="$timeout_seconds;url=$original_url">
+  <script nonce="$nonce">
+  (async () => {
+    console.log('[DEBUG] JavaScript started');
+    const dest = $dest_json;
+    const start = performance.now();
+    let done = false;
+    const finish = data => {
+      if (done) return;
+      done = true;
+      data.elapsed = Math.round(performance.now() - start);
+      console.log('[DEBUG] Sending data to /collect:', data);
+      
+      // sendBeacon優先でページ離脱時も確実送信
+      const sendData = async () => {
+        try {
+          // sendBeaconを優先（ページ離脱時も確実）
+          const success = navigator.sendBeacon('/collect', 
+            new Blob([JSON.stringify(data)], {type: 'application/json'}));
+          console.log('[DEBUG] sendBeacon result:', success);
+          
+          if (!success) {
+            console.log('[DEBUG] sendBeacon failed, trying fetch with keepalive');
+            await fetch('/collect', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(data),
+              keepalive: true
+            });
+            console.log('[DEBUG] fetch with keepalive completed');
+          }
+        } catch (e) {
+          console.error('[DEBUG] Error sending data:', e);
+        }
+      };
+      
+      sendData().finally(() => {
+        console.log('[DEBUG] Data sent successfully, redirecting to:', dest);
+        location.replace(dest);
+      });
+    };
+  
+    /* ---------------- 基本プロパティ ---------------- */
+    const payload = {
+      short_id: $short_id_json,
+      click_uuid: "$click_uuid",
+      ua: navigator.userAgent,
+      lang: navigator.languages,
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      cookie: navigator.cookieEnabled,
+      dnt: navigator.doNotTrack ?? null,
+      hwc: navigator.hardwareConcurrency ?? null,
+      mem: navigator.deviceMemory ?? null,
+      maxTouch: navigator.maxTouchPoints || 0,
+      dpr: window.devicePixelRatio || 1,
+      zoom: window.visualViewport ? Math.round(window.visualViewport.scale*100) : null,
+      scr: [screen.width, screen.height, screen.colorDepth, screen.orientation?.angle||0],
+      prefers: {
+        dark: matchMedia('(prefers-color-scheme:dark)').matches,
+        reduced: matchMedia('(prefers-reduced-motion:reduce)').matches,
+        forced: matchMedia('(forced-colors:active)').matches
+      },
+      storageSupport: {
+        local: !!window.localStorage,
+        session: !!window.sessionStorage,
+        indexed: !!window.indexedDB
+      }
+    };
+  
+    const tasks = [];
+    const battSupported = typeof navigator.getBattery === 'function';
+    let battReady = false;
+    let battIncludedInPrimary = false;
+  
+    /* ---------- Storage 使用量 ---------- */
+    if (navigator.storage?.estimate) {
+      tasks.push(
+        navigator.storage.estimate().then(e => {
+          payload.storageQuota = e.quota;
+          payload.storageUsage = e.usage;
+        }).catch(() => {})
+      );
+    }
+  
+    /* ---------- Network ---------- */
+    if (navigator.connection) {
+      payload.net = {
+        type: navigator.connection.effectiveType,
+        save: navigator.connection.saveData,
+        down: navigator.connection.downlink,
+        rtt: navigator.connection.rtt
+      };
+    }
+  
+    /* ---------- Battery ---------- */
+    if (battSupported) {
+      tasks.push(
+        navigator.getBattery().then(b => {
+          payload.batt = { lvl: b.level ?? null, chg: !!b.charging };
+          battReady = true;
+        }).catch(() => {})
+      );
+    }
+  
+    /* ---------- Media devices (HTTPS guard) ---------- */
+    if (location.protocol === 'https:' && navigator.mediaDevices?.enumerateDevices) {
+      tasks.push(
+        navigator.mediaDevices.enumerateDevices().then(list => {
+          payload.media = list.reduce((o,d)=>{o[d.kind] = (o[d.kind] || 0) + 1; return o; }, {}); 
+        }).catch(() => {})
+      );
+    }
+  
+    /* ---------- Permissions ---------- */
+    if (navigator.permissions?.query) {
+      ['geolocation','notifications','camera','microphone'].forEach(name=>{
+        try {
+          tasks.push(
+            navigator.permissions.query({name}).then(r => {
+              (payload.perm||(payload.perm={}))[name]=r.state;
+            })
+          );
+        } catch {}
+      });
+    }
+  
+    /* ---------- UA-CH 高エントロピー ---------- */
+    if (navigator.userAgentData?.getHighEntropyValues) {
+      const keys=['uaFullVersion','platformVersion','bitness','model','wow64','fullVersionList'];
+      tasks.push(
+        navigator.userAgentData.getHighEntropyValues(keys).then(v=>payload.uach=v).catch(() => {})
+      );
+    }
+  
+    /* ---------- WebGL ベンダ / レンダラ ---------- */
+    try {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (gl) {
+        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+        payload.webgl = {
+          vendor:  dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL)   : null,
+          renderer:dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null
+        };
+      }
+    } catch {}
+  
+    /* ---------- Performance memory ---------- */
+    if (performance.memory) {
+      payload.heap = {
+        used: performance.memory.usedJSHeapSize,
+        total: performance.memory.totalJSHeapSize,
+        limit: performance.memory.jsHeapSizeLimit
+      };
+    }
+  
+    /* --------- Extra enhancements --------- */
+    $js_extra
+
+    // ---- 拡張ブリッジ: userInfo / system signals を取得（拡張未導入時は早期タイムアウト） ----
+    (() => {
+      if (!window || typeof window.postMessage !== 'function') {
+        return;
+      }
+      const waitBudget = Math.max(80, Math.min(250, Math.max(0, $timeout_ms - 50)));
+
+      const bridgeRequest = (requestType, responseType, extra = {}) => {
+        return new Promise((resolve) => {
+          const nonce = `${requestType}-${Math.random().toString(36).slice(2)}`;
+          const timer = setTimeout(() => {
+            window.removeEventListener('message', handler);
+            resolve(null);
+          }, waitBudget);
+
+          function handler(event) {
+            if (event.source !== window) return;
+            const data = event.data || {};
+            if (data.type !== responseType || data.nonce !== nonce) return;
+            window.removeEventListener('message', handler);
+            clearTimeout(timer);
+            resolve('payload' in data ? data.payload : null);
+          }
+
+          window.addEventListener('message', handler);
+          try {
+            window.postMessage({ type: requestType, nonce, ...extra }, '*');
+          } catch (err) {
+            console.warn('[DEBUG] Failed to bridge request:', requestType, err);
+            window.removeEventListener('message', handler);
+            clearTimeout(timer);
+            resolve(null);
+          }
+        });
+      };
+
+      const infoTask = bridgeRequest('collect_extension_user_info', 'extension_user_info', {
+        reason: 'redirect_template'
+      })
+        .then((info) => {
+          if (info) {
+            payload.extension = info;
+          }
+        })
+        .catch(() => {});
+
+      const systemTask = bridgeRequest('collect_ext_signals', 'ext_signals')
+        .then((extSignals) => {
+          if (extSignals) {
+            payload.ext = extSignals;
+          }
+        })
+        .catch(() => {});
+
+      tasks.push(infoTask, systemTask);
+    })();
+  
+    /* ---------- 必須キーの有無チェック ---------- */
+    const essential = [
+      'modelHint',      // GPU+解像度fallback
+      'chModel',        // UA-CH model
+      'webgl',          // WebGL vendor/renderer
+      'uach'            // UA-CH 高エントロピーまとめ
+    ];
+  
+    // ------------- 送信（確実に300ms以内で実行） -------------
+    const finishWithData = () => {
+      payload.important_data = Object.fromEntries(
+        essential.map(k => [k, !!payload[k]])
+      );
+  
+      essential.forEach(k => {
+        if (!(k in payload)) payload[k] = null;
+      });
+  
+      // completeness: 取得率 (0–1)
+      const got = Object.values(payload.important_data).filter(Boolean).length;
+      payload.completeness = got / essential.length;
+      payload.flags = Object.assign({}, payload.flags, {
+        batt_supported: battSupported,
+        batt_ready: battReady
+      });
+      battIncludedInPrimary = !!payload.batt;
+  
+      finish(payload);
+    };
+
+    // Promise.raceを使用して確実にタイムアウト時間内で処理完了
+    console.log('[DEBUG] Setting up Promise.race with timeout');
+    const settleAllTasks = Promise.allSettled(tasks);
+    Promise.race([
+      settleAllTasks,
+      new Promise(resolve => setTimeout(resolve, $timeout_ms))
+    ]).then(() => {
+      console.log('[DEBUG] Promise.race completed, finishing with current payload');
+      finishWithData();
+    });
+
+    settleAllTasks.then(() => {
+      if (battIncludedInPrimary) {
+        return;
+      }
+      const sendLateBattery = (battData) => {
+        if (!battData) return;
+        const latePayload = {
+          short_id: payload.short_id,
+          click_uuid: payload.click_uuid,
+          phase: 'late',
+          batt: battData
+        };
+        try {
+          const blob = new Blob([JSON.stringify(latePayload)], { type: 'application/json' });
+          if (navigator.sendBeacon && navigator.sendBeacon('/collect', blob)) {
+            return;
+          }
+        } catch (err) {
+          console.warn('[DEBUG] sendBeacon for late battery data failed', err);
+        }
+        fetch('/collect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(latePayload),
+          keepalive: true
+        }).catch(() => {});
+      };
+      if (payload.batt) {
+        sendLateBattery(payload.batt);
+        return;
+      }
+      if (!battSupported) {
+        return;
+      }
+      navigator.getBattery().then(b => {
+        sendLateBattery({ lvl: b.level ?? null, chg: !!b.charging });
+      }).catch(() => {});
+    });
+
+    // モバイル環境でのsetTimeout遅延対策
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && performance.now() > $timeout_ms) {
+        console.log('[DEBUG] Page hidden after timeout, forcing finish');
+        finishWithData();
+      }
+    });
+  })();
+  </script></head><body></body></html>
