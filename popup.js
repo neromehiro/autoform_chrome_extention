@@ -459,6 +459,27 @@
     }
   }
 
+  const FLOW_STAGE_LABELS = {
+    first: "1回目 (入力→確認)",
+    second: "2回目 (送信確定)"
+  };
+  const FLOW_REASON_LABELS = {
+    first_detected: "初回: メール一致",
+    email_match: "メール一致 (セッション継続)",
+    "submit=send": "body に submit=send",
+    "url_path=/send": "URL が /send",
+    "location=/thanks": "Location が /thanks|/completion",
+    "referer=/confirm": "Referer が /confirm",
+    form_id_combo: "フォームID + submitConfirm 無し",
+    cdp_stack_match: "CDP: submit/click stack一致"
+  };
+
+  function filterLogsByStage(logs, stage = null) {
+    if (!Array.isArray(logs)) return [];
+    if (!stage) return logs;
+    return logs.filter((log) => log?.flowStage === stage);
+  }
+
   function formatCurlLogs(logs) {
     if (!Array.isArray(logs) || logs.length === 0) {
       return "まだメールアドレスを含むリクエストを検知していません。フォーム送信後に再度お試しください。";
@@ -469,6 +490,9 @@
         const time = new Date(log.timestamp || Date.now()).toLocaleString();
         lines.push(`#${index + 1} / ${time}`);
         lines.push(`URL: ${log.url}`);
+        if (log.origin) {
+          lines.push(`Origin: ${log.origin}`);
+        }
         lines.push(`送信元URL: ${log.sourceUrl || "不明"}`);
         lines.push(`Method: ${log.method || "不明"} / Status: ${log.statusCode ?? "不明"}`);
         if (log.error) {
@@ -476,6 +500,28 @@
         }
         if (log.email) {
           lines.push(`Email: ${log.email}`);
+        }
+        if (log.flowStage || log.flowReason || log.flowId || log.formId) {
+          const stageLabel = FLOW_STAGE_LABELS[log.flowStage] || log.flowStage;
+          if (stageLabel) {
+            lines.push(`Flow Stage: ${stageLabel}`);
+          }
+          const reasonLabel = log.flowReason ? FLOW_REASON_LABELS[log.flowReason] || log.flowReason : null;
+          if (reasonLabel) {
+            lines.push(`Flow 判定根拠: ${reasonLabel}`);
+          }
+          if (log.flowId) {
+            lines.push(`Flow ID: ${log.flowId}`);
+          }
+          if (log.formId) {
+            lines.push(`Form ID: ${log.formId}`);
+          }
+          if (typeof log.flowCompleted === "boolean" && log.flowStage === "second") {
+            lines.push(`完了検知: ${log.flowCompleted ? "完了" : "未確認"}`);
+          }
+        }
+        if (log.cdpMatch?.metadata?.eventName) {
+          lines.push(`CDPイベント: ${log.cdpMatch.metadata.eventName}`);
         }
         lines.push("curl:");
         lines.push(log.curl || "(curl文字列なし)");
@@ -689,40 +735,64 @@
         return;
       }
       chrome.storage.local.get(Object.values(DETAIL_STORAGE_KEYS), (res) => {
-        cachedDetails = {
-          api: res?.[DETAIL_STORAGE_KEYS.api] || "",
-          curl: res?.[DETAIL_STORAGE_KEYS.curl] || ""
-        };
+      cachedDetails = {
+        api: res?.[DETAIL_STORAGE_KEYS.api] || "",
+        curl: res?.[DETAIL_STORAGE_KEYS.curl] || ""
+      };
         resolve(cachedDetails);
       });
     });
   }
 
-  async function refreshCurlDetailIndicator(options = {}) {
-    const indicator = qs("curl-details-status");
-    const btn = qs("show-curl-details");
+  async function refreshCurlIndicator(
+    {
+      indicatorId,
+      buttonId,
+      cacheKey,
+      stage = null,
+      emptyLabel = "データ未検知",
+      cachedLabel = "保存済みのログあり"
+    },
+    options = {}
+  ) {
+    const indicator = qs(indicatorId);
+    const btn = qs(buttonId);
     if (!indicator) return;
     if (!options.silent) {
       setDetailStatus(indicator, "loading", "確認中…");
     }
     try {
       const logs = await fetchCurlLogs();
-      if (Array.isArray(logs) && logs.length > 0) {
-        const latest = logs[0];
-        const time = formatDetailTimestamp(latest.timestamp);
+      const filtered = filterLogsByStage(logs, stage);
+      if (filtered.length > 0) {
+        const time = formatDetailTimestamp(filtered[0].timestamp);
         setDetailStatus(indicator, "has-data", time ? `最新検知: ${time}` : "データあり");
         setDetailButtonState(btn, true);
-      } else if (cachedDetails.curl) {
-        setDetailStatus(indicator, "has-data", "保存済みのログあり");
+      } else if (cachedDetails[cacheKey]) {
+        setDetailStatus(indicator, "has-data", cachedLabel);
         setDetailButtonState(btn, true);
       } else {
-        setDetailStatus(indicator, "empty", "データ未検知");
+        setDetailStatus(indicator, "empty", emptyLabel);
         setDetailButtonState(btn, false);
       }
     } catch (_) {
       setDetailStatus(indicator, "error", "取得エラー");
       setDetailButtonState(btn, false);
     }
+  }
+
+  async function refreshCurlDetailIndicator(options = {}) {
+    await refreshCurlIndicator(
+      {
+        indicatorId: "curl-details-status",
+        buttonId: "show-curl-details",
+        cacheKey: "curl",
+        stage: null,
+        emptyLabel: "データ未検知",
+        cachedLabel: "保存済みのログあり"
+      },
+      options
+    );
   }
 
   async function refreshApiDetailIndicator(options = {}) {
@@ -783,7 +853,16 @@
     ]);
   }
 
-  async function handleShowCurlDetails(btn, outputEl) {
+  async function handleShowCurlDetails(
+    btn,
+    outputEl,
+    {
+      stage = null,
+      cacheKey = "curl",
+      emptyMessage = "まだcurlログを検知していません。フォーム送信後に再度お試しください。",
+      label = "curl"
+    } = {}
+  ) {
     if (!outputEl) return;
     const previousText = outputEl.textContent || "";
     const hadPrevious = Boolean(previousText.trim());
@@ -792,18 +871,19 @@
     outputEl.textContent = "取得中...";
     try {
       const logs = await fetchCurlLogs();
-      if (Array.isArray(logs) && logs.length) {
-        const text = formatCurlLogs(logs);
+      const filtered = filterLogsByStage(logs, stage);
+      if (Array.isArray(filtered) && filtered.length) {
+        const text = formatCurlLogs(filtered);
         setDetailTextOutput(outputEl, text);
-        cacheDetailText("curl", text);
+        cacheDetailText(cacheKey, text);
         setDetailButtonState(btn, true);
       } else if (hadPrevious) {
         setDetailTextOutput(outputEl, previousText);
       } else {
-        outputEl.textContent = "まだcurlログを検知していません。";
+        outputEl.textContent = emptyMessage;
       }
     } catch (err) {
-      outputEl.textContent = `curl情報の取得に失敗しました: ${err.message}`;
+      outputEl.textContent = `${label}情報の取得に失敗しました: ${err.message}`;
     } finally {
       btn.disabled = false;
     }
@@ -812,11 +892,43 @@
   function handleDetailHistoryReset(btn) {
     if (!btn) return;
     btn.addEventListener("click", () => {
+      btn.disabled = true;
       clearCachedDetails();
       setDetailTextOutput(qs("curl-details"), "");
       setDetailTextOutput(qs("api-details"), "");
+      setDetailTextOutput(qs("user-info-details"), "");
+      setDetailTextOutput(qs("analysis-data"), "まだデータがありません");
       setDetailStatus(qs("curl-details-status"), "empty", "データ未検知");
       setDetailStatus(qs("api-details-status"), "empty", "未取得");
+      setDetailStatus(qs("user-info-details-status"), "empty", "未取得");
+      setDetailStatus(qs("analysis-data-status"), "empty", "データ未検知");
+
+      const sendResetMessage = () =>
+        new Promise((resolve, reject) => {
+          if (!chrome?.runtime?.sendMessage) {
+            resolve(false);
+            return;
+          }
+          chrome.runtime.sendMessage({ type: "autoform_reset_debug_data" }, (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            resolve(response?.ok === true);
+          });
+        });
+
+      sendResetMessage()
+        .catch((err) => {
+          console.warn("[AutoForm] detail reset failed", err);
+          setDetailStatus(qs("curl-details-status"), "error", "リセットエラー");
+          setDetailStatus(qs("api-details-status"), "error", "リセットエラー");
+          setDetailStatus(qs("analysis-data-status"), "error", "リセットエラー");
+        })
+        .finally(() => {
+          btn.disabled = false;
+          refreshDetailIndicators({ silent: true });
+        });
     });
   }
 
