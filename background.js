@@ -194,12 +194,17 @@ function applyBadgeText(tabId, count) {
 
 function updateBadgeCount(tabId, count) {
   if (typeof tabId !== "number" || tabId < 0) return;
-  if (typeof count === "number" && count > 0) {
-    tabInputCounts.set(tabId, count);
+  const hasUsableCount = Number.isFinite(count) && count >= 0;
+  const normalized = hasUsableCount ? Math.max(0, Math.floor(count)) : 0;
+  if (hasUsableCount) {
+    tabInputCounts.set(tabId, {
+      count: normalized,
+      updatedAt: Date.now()
+    });
   } else {
     tabInputCounts.delete(tabId);
   }
-  applyBadgeText(tabId, count);
+  applyBadgeText(tabId, normalized);
 }
 
 function recordFrameInputCount(tabId, frameId, count) {
@@ -428,6 +433,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  if (message.type === "autoform_get_cached_input_count") {
+    const requestedTabId =
+      typeof message?.tabId === "number" ? message.tabId : sender?.tab?.id;
+    if (typeof requestedTabId !== "number") {
+      sendResponse?.({ count: null, updatedAt: null });
+      return;
+    }
+    const record = tabInputCounts.get(requestedTabId) || null;
+    sendResponse?.({
+      count: typeof record?.count === "number" ? record.count : null,
+      updatedAt: typeof record?.updatedAt === "number" ? record.updatedAt : null
+    });
+    return;
+  }
+
   if (message.type === "autoform_enable_always_on") {
     registerAlwaysOnContentScript()
       .then((ok) => sendResponse({ ok }))
@@ -453,7 +473,7 @@ if (chrome?.webNavigation?.onCommitted) {
     if (details.frameId === 0) {
       recordTabUrl(details.tabId, details.url);
       frameInputCounts.delete(details.tabId);
-      updateBadgeCount(details.tabId, 0);
+      updateBadgeCount(details.tabId, null);
       ensureContentScriptForTab(details.tabId, details.url).catch(() => {});
     }
   });
@@ -472,7 +492,7 @@ if (chrome?.tabs?.onRemoved) {
     recordTabUrl(tabId, null);
     lastHtmlByTab.delete(tabId);
     frameInputCounts.delete(tabId);
-    updateBadgeCount(tabId, 0);
+    updateBadgeCount(tabId, null);
   });
 }
 

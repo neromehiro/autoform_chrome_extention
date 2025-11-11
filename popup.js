@@ -165,6 +165,46 @@
     }
   }
 
+  function fetchCachedInputCount(tabId) {
+    if (!chrome?.runtime?.sendMessage || typeof tabId !== "number") {
+      return Promise.resolve(null);
+    }
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: "autoform_get_cached_input_count", tabId }, (response) => {
+          if (chrome.runtime?.lastError) {
+            resolve(null);
+            return;
+          }
+          const count = Number(response?.count);
+          if (!Number.isFinite(count) || count < 0) {
+            resolve(null);
+            return;
+          }
+          const updatedAt = typeof response?.updatedAt === "number" ? response.updatedAt : null;
+          resolve({ count, updatedAt });
+        });
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  }
+
+  async function waitForCachedInputCount(tabId, options = {}) {
+    const { retries = 4, delayMs = 150 } = options;
+    const attempts = Math.max(1, retries);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const result = await fetchCachedInputCount(tabId);
+      if (result) {
+        return result;
+      }
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    return null;
+  }
+
   function initFloatingButtonToggle(checkbox) {
     if (!checkbox) return;
 
@@ -579,25 +619,19 @@
         return;
       }
       await enableAlwaysOnInjection();
-      const frameIds = await getAllFrameIds(tabId);
-      await ensureInjectedToFrames(tabId, frameIds);
-      const results = await Promise.all(
-        frameIds.map((frameId) => sendCommandToFrame(tabId, frameId, "autoform_count_forms", null))
-      );
-      const totals = results.reduce(
-        (acc, res) => {
-          if (res?.unreachable || res?.error) return acc;
-          acc.forms += Number(res?.forms || 0);
-          acc.controls += Number(res?.controls || 0);
-          return acc;
-        },
-        { forms: 0, controls: 0 }
-      );
-      if (totals.forms === 0 && totals.controls === 0) {
-        setInputCountStatus("フォームを検知できませんでした。ページを再読み込みしてください。", true);
+      await injectContentScriptIntoTab(tabId);
+      const cached = await waitForCachedInputCount(tabId, { retries: 6, delayMs: 120 });
+      if (cached && Number.isFinite(cached.count)) {
+        const ageMs = typeof cached.updatedAt === "number" ? Date.now() - cached.updatedAt : null;
+        if (typeof ageMs === "number" && ageMs > 15000) {
+          const seconds = Math.max(1, Math.round(ageMs / 1000));
+          setInputCountStatus(`${formatDetectionCountMessage(cached.count)} (最終更新 ${seconds}秒前)`);
+        } else {
+          setInputCountStatus(cached.count);
+        }
         return;
       }
-      setInputCountStatus(`フォーム ${totals.forms} 件 / 入力欄 ${totals.controls} 個`);
+      setInputCountStatus("フォームを検知できませんでした。ページを再読み込みしてください。", true);
     } catch (err) {
       setInputCountStatus(`入力欄の取得に失敗しました: ${err.message}`, true);
     }
