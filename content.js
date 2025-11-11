@@ -3,6 +3,13 @@
 // 送信はしない。cURL 取得もしない。
 
 (() => {
+  const GLOBAL_FLAG_KEY = "__autoformContentScriptLoaded";
+  const globalScope = typeof window !== "undefined" ? window : globalThis;
+  if (globalScope[GLOBAL_FLAG_KEY]) {
+    return;
+  }
+  globalScope[GLOBAL_FLAG_KEY] = true;
+
   // テスト用の定数
   const STORAGE_KEY = "autoformEnabled";
   const AUTO_RUN_STORAGE_KEY = "autoformAutoRunOnOpen";
@@ -16,9 +23,9 @@
     "autoform_execute_json",
     "autoform_manual_fill",
     "autoform_count_inputs",
+    "autoform_count_forms",
     "autoform_apply_send_content",
-    "autoform_request_input_count",
-    "autoform_collect_browser_env"
+    "autoform_request_input_count"
   ]);
   const SEND_CONTENT_STORAGE_KEY = "autoformSendContent";
   const FLOATING_BUTTON_STORAGE_KEY = "autoformShowFloatingButton";
@@ -93,93 +100,9 @@
   let floatingPreviewRenderToken = 0;
   const floatingPreviewCopyTimers = new Map();
   let masterEnabled = true;
-  let autoRunOnOpen = true;
+  let autoRunOnOpen = false;
   let lastReportedInputCount = null;
   let inputCountReportTimer = null;
-
-  async function collectBrowserEnv() {
-    const env = {};
-    try {
-      env.ua = navigator.userAgent;
-    } catch (_) {}
-    try {
-      env.lang = navigator.languages;
-    } catch (_) {}
-    try {
-      const resolved = Intl.DateTimeFormat().resolvedOptions();
-      env.tz = resolved?.timeZone || null;
-    } catch (_) {}
-    try {
-      env.hw = {
-        hc: navigator.hardwareConcurrency ?? null,
-        mem: navigator.deviceMemory ?? null,
-        maxTouch: navigator.maxTouchPoints ?? 0
-      };
-    } catch (_) {}
-    try {
-      env.dpr = window.devicePixelRatio ?? 1;
-      env.viewportScale = window.visualViewport ? window.visualViewport.scale ?? null : null;
-    } catch (_) {}
-    try {
-      env.screen = {
-        w: screen?.width ?? null,
-        h: screen?.height ?? null,
-        colorDepth: screen?.colorDepth ?? null,
-        orientation: (screen?.orientation && (screen.orientation.type || screen.orientation.angle)) || null
-      };
-    } catch (_) {}
-    try {
-      if (typeof matchMedia === "function") {
-        env.prefers = {
-          dark: matchMedia("(prefers-color-scheme: dark)").matches,
-          reduced: matchMedia("(prefers-reduced-motion: reduce)").matches
-        };
-      }
-    } catch (_) {}
-    try {
-      if (navigator.userAgentData?.getHighEntropyValues) {
-        env.uaCH = await navigator.userAgentData.getHighEntropyValues([
-          "uaFullVersion",
-          "platform",
-          "platformVersion",
-          "bitness",
-          "model",
-          "fullVersionList",
-          "wow64"
-        ]);
-      }
-    } catch (_) {}
-    try {
-      if (location.protocol === "https:" && navigator.mediaDevices?.enumerateDevices) {
-        const list = await navigator.mediaDevices.enumerateDevices();
-        env.mediaCounts = list.reduce((acc, device) => {
-          acc[device.kind] = (acc[device.kind] || 0) + 1;
-          return acc;
-        }, {});
-      }
-    } catch (_) {}
-    try {
-      const canvas = document.createElement("canvas");
-      const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
-      if (gl) {
-        const dbg = gl.getExtension("WEBGL_debug_renderer_info");
-        env.webgl = {
-          vendor: dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : null,
-          renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null
-        };
-      }
-    } catch (_) {}
-    try {
-      if (performance?.memory) {
-        env.perfMemory = {
-          used: performance.memory.usedJSHeapSize,
-          total: performance.memory.totalJSHeapSize,
-          limit: performance.memory.jsHeapSizeLimit
-        };
-      }
-    } catch (_) {}
-    return env;
-  }
 
   function setNativeValue(el, v) {
     const proto = Object.getPrototypeOf(el);
@@ -480,24 +403,27 @@
 }
 .autoform-floating-button-preview-item {
   width: 100%;
-  border-radius: 0;
-  padding: 6px 10px;
+  border-radius: 14px;
+  padding: 10px 12px 12px;
   border: none;
-  background: rgba(255, 255, 255, 0.62);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   color: #0f172a;
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 2px;
   cursor: pointer;
   font-size: 12px;
   text-align: left;
   font-family: inherit;
-  min-height: 32px;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  min-height: 48px;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
   opacity: 0;
   transform: translateY(10px) scale(0.98);
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
 }
 .autoform-floating-button-preview.is-visible .autoform-floating-button-preview-item {
   animation: autoformPreviewPop 0.22s cubic-bezier(0.34, 0.97, 0.48, 1.18) forwards;
@@ -505,14 +431,17 @@
 }
 .autoform-floating-button-preview-item:hover,
 .autoform-floating-button-preview-item:focus-visible {
-  box-shadow: 0 18px 32px rgba(99, 102, 241, 0.2);
+  box-shadow: 0 20px 36px rgba(99, 102, 241, 0.22);
   outline: none;
+  transform: translateY(-1px) scale(1.01);
 }
 .autoform-floating-button-preview-item.is-copied {
-  box-shadow: 0 18px 32px rgba(16, 185, 129, 0.28);
+  box-shadow: 0 22px 38px rgba(16, 185, 129, 0.32);
+  transform: translateY(-1px) scale(1.01);
 }
 .autoform-floating-button-preview-item.is-error {
-  box-shadow: 0 18px 32px rgba(248, 113, 113, 0.25);
+  box-shadow: 0 22px 38px rgba(248, 113, 113, 0.3);
+  transform: translateY(-1px) scale(1.01);
 }
 .autoform-preview-label {
   font-size: 11px;
@@ -520,6 +449,8 @@
   letter-spacing: 0.04em;
   text-transform: none;
   font-weight: 600;
+  position: relative;
+  z-index: 1;
 }
 .autoform-preview-value {
   font-size: 12px;
@@ -528,21 +459,37 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  position: relative;
+  z-index: 1;
 }
 .autoform-preview-feedback {
+  position: absolute;
+  inset: 8px 10px;
+  border-radius: 12px;
+  padding: 6px 10px;
   font-size: 11px;
-  color: #10b981;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: #f8fafc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
   opacity: 0;
-  transform: translateY(-2px);
-  transition: opacity 0.18s ease, transform 0.18s ease, color 0.18s ease;
+  transform: translateX(40px) rotate(-1deg);
+  z-index: 2;
+  background: linear-gradient(120deg, rgba(34, 197, 94, 0.92), rgba(13, 148, 136, 0.95));
+  box-shadow: inset 0 0 18px rgba(15, 23, 42, 0.12);
+  transition: background 0.25s ease;
 }
 .autoform-floating-button-preview-item.is-copied .autoform-preview-feedback,
 .autoform-floating-button-preview-item.is-error .autoform-preview-feedback {
   opacity: 1;
-  transform: translateY(0);
+  animation: autoformFeedbackSlide 1.9s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 .autoform-floating-button-preview-item.is-error .autoform-preview-feedback {
-  color: #ef4444;
+  background: linear-gradient(120deg, rgba(248, 113, 113, 0.98), rgba(239, 68, 68, 0.95));
 }
 .autoform-floating-button-preview-empty {
   font-size: 12px;
@@ -561,6 +508,24 @@
   100% {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+@keyframes autoformFeedbackSlide {
+  0% {
+    opacity: 0;
+    transform: translateX(40px) rotate(-1deg);
+  }
+  15% {
+    opacity: 1;
+    transform: translateX(0) rotate(0deg);
+  }
+  70% {
+    opacity: 1;
+    transform: translateX(0) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-36px) rotate(1deg);
   }
 }
 `;
@@ -968,7 +933,23 @@
       applyFloatingButtonDefaultStyle(btn);
     }
     try {
-      await performRemoteFill();
+      const broadcastResult = await requestManualFillAcrossFrames();
+      let usedBroadcast = false;
+      if (broadcastResult?.ok) {
+        usedBroadcast = true;
+        const successCount = broadcastResult.summary?.success || 0;
+        if (successCount > 0) {
+          showCompletionNotice();
+        } else {
+          autoFillTriggered = false;
+        }
+      }
+      if (!usedBroadcast) {
+        const localResult = await performRemoteFill();
+        if (localResult?.error) {
+          autoFillTriggered = false;
+        }
+      }
     } finally {
       floatingButtonBusy = false;
       if (btn) {
@@ -1088,6 +1069,25 @@
     });
   }
 
+  function requestManualFillAcrossFrames() {
+    if (!chrome?.runtime?.sendMessage) {
+      return Promise.resolve({ error: "runtime_unavailable" });
+    }
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: "autoform_manual_fill_all_frames" }, (response) => {
+          if (chrome.runtime.lastError) {
+            resolve({ error: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(response || {});
+        });
+      } catch (err) {
+        resolve({ error: err?.message || "manual_fill_failed" });
+      }
+    });
+  }
+
   function clearFloatingButtonCompletionTimer() {
     if (floatingButtonCompletionInterval) {
       clearInterval(floatingButtonCompletionInterval);
@@ -1161,6 +1161,19 @@
     btn.style.background = FLOATING_BUTTON_SUCCESS_BACKGROUND;
     btn.style.boxShadow = FLOATING_BUTTON_SUCCESS_SHADOW;
     btn.style.color = "#fff";
+  }
+
+  function countActualForms(root = document) {
+    const scope = root && typeof root.querySelectorAll === "function" ? root : document;
+    try {
+      const nativeForms = scope.querySelectorAll("form").length;
+      if (nativeForms > 0) {
+        return nativeForms;
+      }
+      return scope.querySelectorAll(".hs-form").length;
+    } catch (_) {
+      return 0;
+    }
   }
 
   function countEligibleInputs(root = document) {
@@ -1486,6 +1499,12 @@
       reportInputCountNow(count);
       return { count };
     }
+    if (command === "autoform_count_forms") {
+      return {
+        forms: countActualForms(document),
+        controls: countFormControls(document)
+      };
+    }
     if (command === "autoform_apply_send_content") {
       const sendContentResult = applySendContent(payload);
       return { sendContent: sendContentResult };
@@ -1493,9 +1512,6 @@
     if (command === "autoform_request_input_count") {
       const count = reportInputCountNow();
       return { count };
-    }
-    if (command === "autoform_collect_browser_env") {
-      return collectBrowserEnv().then((env) => ({ env }));
     }
     return null;
   }

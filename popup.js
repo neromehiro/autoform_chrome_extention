@@ -78,6 +78,13 @@
     }
   }
 
+  function setFloatingButtonStatus(message, isError = false) {
+    const statusEl = qs("floating-button-status");
+    if (!statusEl) return;
+    statusEl.textContent = message;
+    statusEl.style.color = isError ? "#dc2626" : "#64748b";
+  }
+
   function setPlanStatus(hasKey) {
     const planEl = qs("plan-status");
     const badgeEl = qs("plan-badge");
@@ -99,11 +106,74 @@
     statusEl.style.color = isError ? "#b91c1c" : "#475569";
   }
 
+  async function ensureAllUrlsPermission() {
+    if (!chrome?.permissions?.contains) return true;
+    const hasAll = await new Promise((resolve) => {
+      chrome.permissions.contains({ origins: ["<all_urls>"] }, (granted) => resolve(Boolean(granted)));
+    });
+    if (hasAll) return true;
+    if (!chrome.permissions?.request) return false;
+    return new Promise((resolve) => {
+      chrome.permissions.request({ origins: ["<all_urls>"] }, (granted) => resolve(Boolean(granted)));
+    });
+  }
+
+  async function enableAlwaysOnInjection() {
+    if (!chrome?.runtime?.sendMessage) return;
+    await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "autoform_enable_always_on" }, () => resolve());
+    });
+  }
+
+  async function ensureInjectedToFrames(tabId, frameIds) {
+    if (!chrome?.scripting?.executeScript) return;
+    try {
+      const target = { tabId };
+      if (Array.isArray(frameIds) && frameIds.length > 0) {
+        target.frameIds = frameIds;
+      }
+      await chrome.scripting.executeScript({
+        target,
+        files: ["content.js"]
+      });
+    } catch (_) {
+      // ignore injection failures (sandboxed framesなど)
+    }
+  }
+
+  async function injectContentScriptIntoTab(tabId) {
+    if (!chrome?.scripting?.executeScript || typeof tabId !== "number") return;
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        files: ["content.js"]
+      });
+    } catch (_) {
+      // ignore (chrome:// など)
+    }
+  }
+
+  async function injectContentScriptIntoExistingTabs() {
+    if (!chrome?.tabs?.query) return;
+    const tabs = await new Promise((resolve) => {
+      chrome.tabs.query({}, (result) => resolve(result || []));
+    });
+    for (const tab of tabs) {
+      if (typeof tab?.id !== "number") continue;
+      if (!tab.url || !/^https?:/i.test(tab.url)) continue;
+      await injectContentScriptIntoTab(tab.id);
+    }
+  }
+
   function initFloatingButtonToggle(checkbox) {
     if (!checkbox) return;
 
+    setFloatingButtonStatus("右下のボタンは表示されません");
+
     const apply = (value) => {
-      checkbox.checked = value;
+      const enabled = value === true;
+      checkbox.checked = enabled;
+      setFloatingButtonStatus(enabled ? "右下のボタンを表示します" : "右下のボタンは表示されません");
     };
 
     if (chrome?.storage?.sync) {
@@ -115,9 +185,42 @@
     }
 
     checkbox.addEventListener("change", () => {
-      if (!chrome?.storage?.sync) return;
-      chrome.storage.sync.set({ [FLOATING_BUTTON_STORAGE_KEY]: checkbox.checked });
+      handleFloatingButtonToggleChange(checkbox).catch((err) => {
+        console.error("[AutoForm] Floating button toggle failed", err);
+        setFloatingButtonStatus(`右下ボタンの切替に失敗しました: ${err.message}`, true);
+      });
     });
+  }
+
+  async function handleFloatingButtonToggleChange(checkbox) {
+    const wantsEnabled = checkbox.checked;
+    if (!chrome?.storage?.sync) {
+      checkbox.checked = false;
+      setFloatingButtonStatus("設定を保存できません (storage が利用できません)", true);
+      return;
+    }
+    if (!wantsEnabled) {
+      chrome.storage.sync.set({ [FLOATING_BUTTON_STORAGE_KEY]: false });
+      setFloatingButtonStatus("右下のボタンは表示されません");
+      return;
+    }
+    setFloatingButtonStatus("右下のボタンを有効化しています…");
+    checkbox.disabled = true;
+    try {
+      const granted = await ensureAllUrlsPermission();
+      if (!granted) {
+        checkbox.checked = false;
+        chrome.storage.sync.set({ [FLOATING_BUTTON_STORAGE_KEY]: false });
+        setFloatingButtonStatus("全サイトアクセスを許可すると右下ボタンを常時表示できます。", true);
+        return;
+      }
+      await enableAlwaysOnInjection();
+      await injectContentScriptIntoExistingTabs();
+      chrome.storage.sync.set({ [FLOATING_BUTTON_STORAGE_KEY]: true });
+      setFloatingButtonStatus("右下のボタンを表示中です");
+    } finally {
+      checkbox.disabled = false;
+    }
   }
 
   function loadApiKeyState() {
@@ -434,159 +537,6 @@
     });
   }
 
-  async function fetchApiLog() {
-    const tabId = await getActiveTabId().catch(() => null);
-    return new Promise((resolve, reject) => {
-      if (!chrome?.runtime?.sendMessage) {
-        reject(new Error("runtime API が利用できません"));
-        return;
-      }
-      chrome.runtime.sendMessage({ type: "autoform_get_last_api_log", tabId }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        resolve(response?.log || null);
-      });
-    });
-  }
-
-  async function fetchCurlLogs() {
-    const tabId = await getActiveTabId().catch(() => null);
-    return new Promise((resolve, reject) => {
-      if (!chrome?.runtime?.sendMessage) {
-        reject(new Error("runtime API が利用できません"));
-        return;
-      }
-      chrome.runtime.sendMessage({ type: "autoform_get_detected_curl_logs", tabId }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        const logs = Array.isArray(response?.logs) ? response.logs : [];
-        resolve(logs);
-      });
-    });
-  }
-
-  function formatApiLog(log) {
-    if (!log) {
-      return "まだAPIリクエストの履歴がありません。フォーム入力を実行してください。";
-    }
-    const lines = [];
-    const time = new Date(log.timestamp || Date.now()).toLocaleString();
-    lines.push(`取得時刻: ${time}`);
-    lines.push("");
-    lines.push("-- Request --");
-    lines.push(
-      JSON.stringify(
-        log.request || {},
-        null,
-        2
-      )
-    );
-    lines.push("");
-    if (log.error) {
-      lines.push(`-- Error --\n${log.error}`);
-    } else {
-      lines.push("-- Response --");
-      lines.push(
-        JSON.stringify(
-          log.response || {},
-          null,
-          2
-        )
-      );
-      lines.push("");
-      lines.push(`items_count: ${log.items_count ?? "不明"}`);
-    }
-    return lines.join("\n");
-  }
-
-  function stringifyWithLimit(value, limit = 12000) {
-    try {
-      const normalized = value === undefined ? null : value;
-      const json = JSON.stringify(normalized, null, 2);
-      if (typeof json !== "string") {
-        return "";
-      }
-      if (limit && json.length > limit) {
-        return `${json.slice(0, limit)}...\n(以下 ${json.length - limit} 文字を省略)`;
-      }
-      return json;
-    } catch (err) {
-      return `<<JSON変換エラー: ${err.message}>>`;
-    }
-  }
-
-
-  async function listFrameOrigins(tabId) {
-    const frames = await new Promise((resolve, reject) => {
-      if (!chrome?.webNavigation?.getAllFrames) {
-        reject(new Error("webNavigation API が利用できません"));
-        return;
-      }
-      chrome.webNavigation.getAllFrames({ tabId }, (res) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        resolve(res || []);
-      });
-    });
-    const origins = new Set();
-    for (const frame of frames) {
-      try {
-        if (!frame.url) continue;
-        const u = new URL(frame.url);
-        if (["chrome:", "about:", "data:"].includes(u.protocol)) continue;
-        origins.add(u.origin);
-      } catch (_) {
-        continue;
-      }
-    }
-    const topOrigin = await new Promise((resolve) => {
-      if (!chrome?.tabs?.get) {
-        resolve(null);
-        return;
-      }
-      chrome.tabs.get(tabId, (tab) => {
-        if (chrome.runtime.lastError) {
-          resolve(null);
-          return;
-        }
-        try {
-          resolve(new URL(tab?.url || "").origin);
-        } catch (_) {
-          resolve(null);
-        }
-      });
-    });
-    if (topOrigin) origins.delete(topOrigin);
-    return [...origins];
-  }
-
-  async function ensureOriginsPermission(origins) {
-    const need = [];
-    for (const origin of origins) {
-      const has = await new Promise((resolve) => {
-        chrome.permissions.contains({ origins: [`${origin}/*`] }, (granted) => {
-          resolve(!!granted);
-        });
-      });
-      if (!has) need.push(origin);
-    }
-    if (!need.length) return true;
-    const ok = await new Promise((resolve) => {
-      chrome.permissions.request(
-        { origins: need.map((origin) => `${origin}/*`) },
-        (granted) => resolve(!!granted)
-      );
-    });
-    return ok;
-  }
-
-
   function isIgnorableConnectionError(message) {
     if (!message || typeof message !== "string") return false;
     const lower = message.toLowerCase();
@@ -620,17 +570,34 @@
   }
 
   async function refreshDetectedInputCount() {
-    setInputCountStatus("入力欄を検知中です…");
+    setInputCountStatus("入力欄/フォームを検知中です…");
     try {
       const tabId = await getActiveTabId();
+      const granted = await ensureAllUrlsPermission();
+      if (!granted) {
+        setInputCountStatus("全サイトへのアクセス許可が必要です。ボタンを押して許可してください。", true);
+        return;
+      }
+      await enableAlwaysOnInjection();
       const frameIds = await getAllFrameIds(tabId);
+      await ensureInjectedToFrames(tabId, frameIds);
       const results = await Promise.all(
-        frameIds.map((frameId) =>
-          sendCommandToFrame(tabId, frameId, "autoform_count_inputs", null)
-        )
+        frameIds.map((frameId) => sendCommandToFrame(tabId, frameId, "autoform_count_forms", null))
       );
-      const total = results.reduce((sum, res) => sum + (res?.count || 0), 0);
-      setInputCountStatus(total);
+      const totals = results.reduce(
+        (acc, res) => {
+          if (res?.unreachable || res?.error) return acc;
+          acc.forms += Number(res?.forms || 0);
+          acc.controls += Number(res?.controls || 0);
+          return acc;
+        },
+        { forms: 0, controls: 0 }
+      );
+      if (totals.forms === 0 && totals.controls === 0) {
+        setInputCountStatus("フォームを検知できませんでした。ページを再読み込みしてください。", true);
+        return;
+      }
+      setInputCountStatus(`フォーム ${totals.forms} 件 / 入力欄 ${totals.controls} 個`);
     } catch (err) {
       setInputCountStatus(`入力欄の取得に失敗しました: ${err.message}`, true);
     }
@@ -645,17 +612,18 @@
     setStatus("権限チェック中…");
     try {
       const tabId = await getActiveTabId();
-      const origins = await listFrameOrigins(tabId);
-      const ok = await ensureOriginsPermission(origins);
-      if (!ok) {
-        setStatus("実行中止: 権限が得られませんでした", true);
+      const granted = await ensureAllUrlsPermission();
+      if (!granted) {
+        setStatus("実行中止: 全サイト権限が得られませんでした", true);
         btn.disabled = false;
         updateExecuteState();
         await refreshDetectedInputCount();
         return;
       }
+      await enableAlwaysOnInjection();
       setStatus("入力を送信中…");
       const frameIds = await getAllFrameIds(tabId);
+      await ensureInjectedToFrames(tabId, frameIds);
       const results = await Promise.all(
         frameIds.map((frameId) =>
           sendCommandToFrame(tabId, frameId, "autoform_execute_json", currentData)
@@ -686,7 +654,14 @@
     setManualStatus("フォーム入力中…");
     try {
       const tabId = await getActiveTabId();
+      const granted = await ensureAllUrlsPermission();
+      if (!granted) {
+        setManualStatus("全サイト権限がないため入力できませんでした", true);
+        return;
+      }
+      await enableAlwaysOnInjection();
       const frameIds = await getAllFrameIds(tabId);
+      await ensureInjectedToFrames(tabId, frameIds);
       const results = await Promise.all(
         frameIds.map((frameId) =>
           sendCommandToFrame(tabId, frameId, "autoform_manual_fill", null)
@@ -773,14 +748,15 @@
     setSendContentStatus("権限チェック中…");
     try {
       const tabId = await getActiveTabId();
-      const origins = await listFrameOrigins(tabId);
-      const ok = await ensureOriginsPermission(origins);
-      if (!ok) {
-        setSendContentStatus("入力中止: 権限が得られませんでした", true);
+      const granted = await ensureAllUrlsPermission();
+      if (!granted) {
+        setSendContentStatus("入力中止: 全サイト権限が必要です", true);
         return;
       }
+      await enableAlwaysOnInjection();
       setSendContentStatus("入力処理中…");
       const frameIds = await getAllFrameIds(tabId);
+      await ensureInjectedToFrames(tabId, frameIds);
       const results = await Promise.all(
         frameIds.map((frameId) =>
           sendCommandToFrame(tabId, frameId, "autoform_apply_send_content", currentSendContent)

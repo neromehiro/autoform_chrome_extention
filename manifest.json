@@ -1,34 +1,19 @@
 {
   "manifest_version": 3,
-  "name": "Aimsales AutoForm",
+  "name": "AutoForm by Aimsales",
   "version": "0.0.1",
-  "description": "Aimsales AutoForm はフォーム検証用に text/textarea/email/tel/url へ定型値を一括投入し、JSON インポートした XPath 命令も各フレームへ配信する Chrome 拡張です。",
+  "description": "AutoForm は、フォーム営業を自動化し、入力作業を大幅に効率化できる拡張機能です。Aimsales株式会社が開発・提供しています。",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": [
-    "activeTab",
-    "scripting",
-    "webNavigation",
-    "storage",
-    "webRequest",
-    "debugger",
-    "system.cpu",
-    "system.memory",
-    "system.display",
-    "system.storage"
-  ],
+  "permissions": ["scripting", "webNavigation", "storage"],
   "host_permissions": [
-    "https://autoform-chrome-extention-server-csasaeerewb7b9ga.japaneast-01.azurewebsites.net/chrome_extension/*",
-    "<all_urls>"
+    "https://autoform-chrome-extention-server-csasaeerewb7b9ga.japaneast-01.azurewebsites.net/chrome_extension/*"
   ],
-  "optional_permissions": [
-    "enterprise.hardwarePlatform",
-    "enterprise.deviceAttributes"
-  ],
+  "optional_permissions": [],
   "background": {
     "service_worker": "background.js"
   },
@@ -44,20 +29,5 @@
       "48": "icons/icon48.png"
     }
   },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "run_at": "document_idle",
-      "all_frames": true,
-      "match_about_blank": true
-    },
-    {
-      "matches": ["<all_urls>"],
-      "js": ["bridge.content.js"],
-      "run_at": "document_start",
-      "all_frames": true,
-      "match_about_blank": true
-    }
-  ]
+  "content_scripts": []
 }
