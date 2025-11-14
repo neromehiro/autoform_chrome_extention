@@ -18,7 +18,7 @@
     "range", "date", "time", "color", "image"
   ]);
   const MIN_INPUTS_FOR_AUTO = 3;
-  const MIN_FORM_CONTROLS_FOR_REMOTE = 3;
+  const MIN_FORM_CONTROLS_FOR_REMOTE = 1;
   const KNOWN_MESSAGE_TYPES = new Set([
     "autoform_execute_json",
     "autoform_manual_fill",
@@ -29,7 +29,8 @@
   ]);
   const SEND_CONTENT_STORAGE_KEY = "autoformSendContent";
   const FLOATING_BUTTON_STORAGE_KEY = "autoformShowFloatingButton";
-  const FLOATING_BUTTON_LABEL_DEFAULT = "自動入力を実行";
+  const FLOATING_BUTTON_LABEL_DEFAULT = "無制限に使うには";
+  const AIMSALES_SIGNUP_URL = "https://forms.gle/FWkuxr8HenuLkARC7";
   const FLOATING_BUTTON_DEFAULT_BACKGROUND = "linear-gradient(135deg, #0ea5e9, #6366f1)";
   const FLOATING_BUTTON_DEFAULT_SHADOW = "0 16px 32px rgba(99, 102, 241, 0.35)";
   const FLOATING_BUTTON_SUCCESS_BACKGROUND = "linear-gradient(135deg, #10b981, #22c55e)";
@@ -103,6 +104,7 @@
   let autoRunOnOpen = false;
   let lastReportedInputCount = null;
   let inputCountReportTimer = null;
+  let lastThrottleMode = null;
 
   function setNativeValue(el, v) {
     const proto = Object.getPrototypeOf(el);
@@ -287,14 +289,12 @@
     return seconds.toFixed(seconds >= 10 ? 1 : 2);
   }
 
-  function showCompletionNotice(durationSeconds = null) {
-    if (showFloatingButtonCompletion(durationSeconds)) {
+  function showCompletionNotice(durationSeconds = null, throttleMode = null) {
+    if (showFloatingButtonCompletion(durationSeconds, throttleMode)) {
       return;
     }
     const formatted = formatDuration(durationSeconds);
-    const message = formatted
-      ? `✅ ${formatted}秒で入力が完了しました`
-      : "✅ 自動入力が完了しました";
+    const message = formatted ? `✅ ${formatted}秒で入力が完了しました` : "✅ 自動入力が完了しました";
     const notice = createNoticeElement(message, "rgba(34, 197, 94, 0.95)");
     notice.style.bottom = "16px";
     (document.body || document.documentElement).appendChild(notice);
@@ -917,50 +917,16 @@
     }
   }
 
-  async function handleFloatingButtonClick(event) {
+  function handleFloatingButtonClick(event) {
     event.preventDefault();
-    if (floatingButtonBusy) return;
-    floatingButtonBusy = true;
-    autoFillTriggered = true;
-    const btn = floatingButton;
-    const originalText = btn?.textContent;
-    if (btn) {
-      clearFloatingButtonCompletionTimer();
-      floatingButtonCompletionPending = false;
-      btn.textContent = "処理中…";
-      btn.disabled = true;
-      btn.style.opacity = "0.85";
-      applyFloatingButtonDefaultStyle(btn);
-    }
-    try {
-      const broadcastResult = await requestManualFillAcrossFrames();
-      let usedBroadcast = false;
-      if (broadcastResult?.ok) {
-        usedBroadcast = true;
-        const successCount = broadcastResult.summary?.success || 0;
-        if (successCount > 0) {
-          showCompletionNotice();
-        } else {
-          autoFillTriggered = false;
-        }
-      }
-      if (!usedBroadcast) {
-        const localResult = await performRemoteFill();
-        if (localResult?.error) {
-          autoFillTriggered = false;
-        }
-      }
-    } finally {
-      floatingButtonBusy = false;
-      if (btn) {
-        if (!floatingButtonCompletionPending) {
-          btn.textContent = originalText || FLOATING_BUTTON_LABEL_DEFAULT;
-          btn.disabled = false;
-          btn.style.opacity = "1";
-          applyFloatingButtonDefaultStyle(btn);
-        }
+    const targetUrl = AIMSALES_SIGNUP_URL;
+    if (typeof window !== "undefined" && typeof window.open === "function") {
+      const opened = window.open(targetUrl, "_blank", "noopener,noreferrer");
+      if (opened) {
+        return;
       }
     }
+    window.location.href = targetUrl;
   }
 
   function getPageHtml() {
@@ -1025,16 +991,17 @@
             return null;
           }
         })();
-        const { items, durationMs } = await requestFormItemsViaBackground(html, sendRecord, pageUrl);
+        const { items, durationMs, throttleMode, quota } = await requestFormItemsViaBackground(html, sendRecord, pageUrl);
+        lastThrottleMode = throttleMode || lastThrottleMode;
         const applied = applyJsonInstructions(items);
         if (applied.success > 0) {
           const durationSeconds = typeof durationMs === "number" ? durationMs / 1000 : null;
-          showCompletionNotice(durationSeconds);
+          showCompletionNotice(durationSeconds, lastThrottleMode);
         }
-        return { applied };
+        return { applied, quota };
       } catch (err) {
         console.error("[AutoForm] API 実行でエラー", err);
-        return { error: err?.message || "APIエラー" };
+        return { error: err?.message || "APIエラー", quota: err?.quota || null };
       }
     })();
     const result = await remoteFillPromise;
@@ -1055,7 +1022,11 @@
             return;
           }
           if (response?.error) {
-            reject(new Error(response.error));
+            const err = new Error(response.error);
+            if (response?.quota && typeof response.quota === "object") {
+              err.quota = response.quota;
+            }
+            reject(err);
             return;
           }
           const items = response?.items;
@@ -1063,7 +1034,12 @@
             reject(new Error("APIレスポンスが配列形式ではありません"));
             return;
           }
-          resolve({ items, durationMs: response?.durationMs });
+          resolve({
+            items,
+            durationMs: response?.durationMs,
+            throttleMode: response?.throttleMode,
+            quota: response?.quota || null
+          });
         }
       );
     });
@@ -1096,7 +1072,7 @@
     floatingButtonCompletionPending = false;
   }
 
-  function showFloatingButtonCompletion(durationSeconds) {
+  function showFloatingButtonCompletion(durationSeconds, throttleMode) {
     if (!(floatingButton && floatingButtonShouldDisplay)) return false;
     const formatted = formatDuration(durationSeconds);
     const baseLabel = formatted ? `${formatted}秒で入力完了しました` : "入力完了しました";
@@ -1163,22 +1139,54 @@
     btn.style.color = "#fff";
   }
 
-  function countActualForms(root = document) {
-    const scope = root && typeof root.querySelectorAll === "function" ? root : document;
-    try {
-      const nativeForms = scope.querySelectorAll("form").length;
-      if (nativeForms > 0) {
-        return nativeForms;
+  // Shadow DOMを横断しながら selector に一致する要素を収集
+  function queryAllDeep(selector, root = document) {
+    const collected = [];
+    const queue = [root];
+    const visited = new Set();
+    while (queue.length) {
+      const node = queue.shift();
+      if (!node || visited.has(node)) continue;
+      visited.add(node);
+      let scopedElements = [];
+      try {
+        if (typeof node.querySelectorAll === "function") {
+          scopedElements = node.querySelectorAll(selector);
+          scopedElements.forEach((el) => collected.push(el));
+          node.querySelectorAll("*").forEach((el) => {
+            if (el?.shadowRoot && !visited.has(el.shadowRoot)) {
+              queue.push(el.shadowRoot);
+            }
+          });
+        }
+      } catch (_) {
+        // ignore selector errors from host components
       }
-      return scope.querySelectorAll(".hs-form").length;
+      if (node.shadowRoot && !visited.has(node.shadowRoot)) {
+        queue.push(node.shadowRoot);
+      }
+    }
+    return Array.from(new Set(collected));
+  }
+
+  function countActualForms(root = document) {
+    try {
+      const nativeForms = queryAllDeep("form", root).length;
+      if (nativeForms > 0) return nativeForms;
+      return queryAllDeep(
+        '.hs-form, [role="form"], [data-form], [data-component="form"], [class*="form-"]',
+        root
+      ).length;
     } catch (_) {
       return 0;
     }
   }
 
   function countEligibleInputs(root = document) {
-    const scope = root && typeof root.querySelectorAll === "function" ? root : document;
-    const nodes = scope.querySelectorAll("input, textarea");
+    const nodes = queryAllDeep(
+      'input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]',
+      root
+    );
     let count = 0;
     for (const el of nodes) {
       if (el.disabled || el.readOnly) continue;
@@ -1190,9 +1198,8 @@
   }
 
   function countFormControls(root = document) {
-    const scope = root && typeof root.querySelectorAll === "function" ? root : document;
     try {
-      return scope.querySelectorAll("input, textarea, select").length;
+      return queryAllDeep("input, textarea, select", root).length;
     } catch (_) {
       return 0;
     }
@@ -1471,7 +1478,7 @@
       }
     }
 
-    if (success > 0) showCompletionNotice();
+    if (success > 0) showCompletionNotice(null, lastThrottleMode);
     return { total: entries.length, success, filledKeys };
   }
 
@@ -1479,7 +1486,7 @@
     if (command === "autoform_execute_json") {
       const applied = applyJsonInstructions(payload);
       if (applied.success > 0) {
-        showCompletionNotice();
+        showCompletionNotice(null, lastThrottleMode);
       }
       return { applied };
     }
@@ -1488,10 +1495,11 @@
         if (result?.applied) {
           return {
             filled: result.applied.success || 0,
-            applied: result.applied
+            applied: result.applied,
+            quota: result.quota || null
           };
         }
-        return { error: result?.error || "入力に失敗しました" };
+        return { error: result?.error || "入力に失敗しました", quota: result?.quota || null };
       });
     }
     if (command === "autoform_count_inputs") {
@@ -1561,7 +1569,7 @@
 
     observerTimer = setTimeout(() => {
       stopObservation();
-    }, 10000);
+    }, 30000);
   }
 
   function updateAutoFillState() {

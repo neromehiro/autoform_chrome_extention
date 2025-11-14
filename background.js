@@ -1,8 +1,32 @@
-const FORM_ITEMS_ENDPOINT =
-  "https://autoform-chrome-extention-server-csasaeerewb7b9ga.japaneast-01.azurewebsites.net/chrome_extension/form_items";
-const ENV_UPLOAD_ENDPOINT =
-  "https://autoform-chrome-extention-server-csasaeerewb7b9ga.japaneast-01.azurewebsites.net/chrome_extension/env";
+try {
+  importScripts("quota.js");
+} catch (err) {
+  console.warn("[AutoForm] failed to load quota helpers", err);
+}
+try {
+  importScripts("auth.js");
+} catch (err) {
+  console.warn("[AutoForm] failed to load auth helpers", err);
+}
+try {
+  importScripts("config.js");
+} catch (err) {
+  console.warn("[AutoForm] failed to load runtime config helpers", err);
+}
+
+const DEFAULT_SERVER_BASE =
+  RuntimeConfig?.DEFAULT_SERVER_BASE ||
+  "https://autoform-chrome-extention-server-csasaeerewb7b9ga.japaneast-01.azurewebsites.net/chrome_extension";
+const FALLBACK_ENDPOINTS = {
+  formItems: `${DEFAULT_SERVER_BASE}/form_items`,
+  envUpload: `${DEFAULT_SERVER_BASE}/env`,
+  deviceToken: `${DEFAULT_SERVER_BASE}/device_token`
+};
+let FORM_ITEMS_ENDPOINT = FALLBACK_ENDPOINTS.formItems;
+let ENV_UPLOAD_ENDPOINT = FALLBACK_ENDPOINTS.envUpload;
+let DEVICE_TOKEN_ENDPOINT = FALLBACK_ENDPOINTS.deviceToken;
 const INSTALL_ID_STORAGE_KEY = "autoformInstallId";
+const LAST_QUOTA_STORAGE_KEY = "autoformLastQuota";
 const ANALYSIS_TTL_MS = 2 * 60 * 1000;
 const BADGE_BG_COLOR = "#2563eb";
 const BADGE_TEXT_COLOR = "#ffffff";
@@ -10,10 +34,159 @@ const lastHtmlByTab = new Map();
 const tabLastCommittedUrls = new Map();
 const tabInputCounts = new Map();
 const frameInputCounts = new Map();
+const API_KEY_STORAGE_KEY = "aimsalesApiKey";
 
-bootstrapTabUrls();
-setBadgeBackgroundDefaults();
-registerAlwaysOnContentScript();
+const FALLBACK_RULES = {
+  priority: { initialDays: 7, dailyInitial: 50, dailyAfter: 10 },
+  sharedDelay: { minMs: 2000, maxMs: 8000 },
+  requireApiKey: false
+};
+const clone = (val) => JSON.parse(JSON.stringify(val || {}));
+let RUNTIME = clone(RuntimeConfig?.DEFAULTS || { edition: "free", rules: FALLBACK_RULES, endpoints: FALLBACK_ENDPOINTS });
+let EDITION = RUNTIME.edition || "free";
+let RULES = RUNTIME.rules || { ...FALLBACK_RULES };
+let IS_FREE_EDITION = EDITION === "free";
+let REQUIRE_API_KEY = false;
+let lastServerQuota = null;
+let lastQuotaLoadPromise = null;
+
+const quotaAPI = typeof self !== "undefined" ? self.Quota : undefined;
+const deviceAuthAPI = typeof self !== "undefined" ? self.DeviceAuth : undefined;
+
+function applyRuntimeConfig(nextConfig) {
+  const fallbackConfig = clone(RuntimeConfig?.DEFAULTS || { edition: "free", rules: FALLBACK_RULES, endpoints: FALLBACK_ENDPOINTS });
+  const config = nextConfig || fallbackConfig;
+  RUNTIME = config;
+  const endpoints = config?.endpoints || FALLBACK_ENDPOINTS;
+  FORM_ITEMS_ENDPOINT = endpoints.formItems || FALLBACK_ENDPOINTS.formItems;
+  ENV_UPLOAD_ENDPOINT = endpoints.envUpload || FALLBACK_ENDPOINTS.envUpload;
+  DEVICE_TOKEN_ENDPOINT = endpoints.deviceToken || FALLBACK_ENDPOINTS.deviceToken;
+  RULES = clone(config?.rules || FALLBACK_RULES);
+  EDITION = config?.edition || "free";
+  IS_FREE_EDITION = EDITION === "free";
+  REQUIRE_API_KEY = Boolean(RULES?.requireApiKey);
+  if (config?.quota) {
+    lastServerQuota = config.quota;
+  }
+  return config;
+}
+
+const runtimeConfigPromise =
+  typeof RuntimeConfig?.loadRuntimeConfig === "function"
+    ? RuntimeConfig.loadRuntimeConfig({ serverBase: DEFAULT_SERVER_BASE, plan: EDITION || "free" })
+        .then((cfg) => applyRuntimeConfig(cfg))
+        .catch((err) => {
+          console.error("[AutoForm] runtime config load failed", err);
+          return applyRuntimeConfig(null);
+        })
+    : Promise.resolve(applyRuntimeConfig(null));
+
+async function ensureRuntimeConfigReady() {
+  try {
+    await runtimeConfigPromise;
+  } catch (_) {
+    // fallback already applied
+  }
+  return RUNTIME;
+}
+
+function readSyncStorage(key) {
+  if (!chrome?.storage?.sync) {
+    return Promise.resolve(undefined);
+  }
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(key, (res) => resolve(res?.[key]));
+  });
+}
+
+async function getApiKey() {
+  const stored = await readSyncStorage(API_KEY_STORAGE_KEY);
+  return typeof stored === "string" ? stored : "";
+}
+
+function sanitizeQuotaValue(value) {
+  if (value === Infinity) return "Infinity";
+  if (value === -Infinity) return "-Infinity";
+  if (Number.isNaN(value)) return null;
+  if (Array.isArray(value)) return value.map((entry) => sanitizeQuotaValue(entry));
+  if (value && typeof value === "object") {
+    const next = {};
+    Object.entries(value).forEach(([key, val]) => {
+      next[key] = sanitizeQuotaValue(val);
+    });
+    return next;
+  }
+  return value;
+}
+
+function persistLastServerQuota(quota) {
+  if (!chrome?.storage?.local || !quota || typeof quota !== "object") return;
+  const sanitized = sanitizeQuotaValue(quota);
+  try {
+    chrome.storage.local.set({ [LAST_QUOTA_STORAGE_KEY]: sanitized }, () => {
+      if (chrome.runtime?.lastError) {
+        console.warn("[AutoForm] failed to persist quota", chrome.runtime.lastError);
+      }
+    });
+  } catch (err) {
+    console.warn("[AutoForm] quota persistence failed", err);
+  }
+}
+
+function loadPersistedQuotaFromStorage() {
+  if (!chrome?.storage?.local) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    chrome.storage.local.get(LAST_QUOTA_STORAGE_KEY, (res) => {
+      if (chrome.runtime?.lastError) {
+        resolve(null);
+        return;
+      }
+      const stored = res?.[LAST_QUOTA_STORAGE_KEY];
+      resolve(stored && typeof stored === "object" ? stored : null);
+    });
+  });
+}
+
+function ensureLastQuotaLoaded() {
+  if (lastServerQuota) {
+    return Promise.resolve(lastServerQuota);
+  }
+  if (lastQuotaLoadPromise) {
+    return lastQuotaLoadPromise;
+  }
+  lastQuotaLoadPromise = loadPersistedQuotaFromStorage()
+    .then((stored) => {
+      if (stored && typeof stored === "object" && !lastServerQuota) {
+        lastServerQuota = stored;
+      }
+      return lastServerQuota;
+    })
+    .catch((err) => {
+      console.warn("[AutoForm] failed to load stored quota", err);
+      return null;
+    })
+    .finally(() => {
+      lastQuotaLoadPromise = null;
+    });
+  return lastQuotaLoadPromise;
+}
+
+function updateLastServerQuota(quota) {
+  if (quota && typeof quota === "object") {
+    lastServerQuota = quota;
+    persistLastServerQuota(quota);
+  }
+}
+
+ensureLastQuotaLoaded().catch(() => {});
+
+runtimeConfigPromise
+  .catch(() => {})
+  .finally(() => {
+    bootstrapTabUrls();
+    setBadgeBackgroundDefaults();
+    registerAlwaysOnContentScript().catch(() => {});
+  });
 
 async function registerAlwaysOnContentScript() {
   if (!chrome?.permissions?.contains || !chrome?.scripting?.registerContentScripts) {
@@ -35,7 +208,7 @@ async function registerAlwaysOnContentScript() {
       js: ["content.js"],
       allFrames: true,
       matchAboutBlank: true,
-      runAt: "document_idle",
+      runAt: "document_end",
       persistAcrossSessions: true
     }
   ]);
@@ -60,6 +233,78 @@ async function hasAllUrlsPermission() {
   return new Promise((resolve) => {
     chrome.permissions.contains({ origins: ["<all_urls>"] }, (granted) => resolve(Boolean(granted)));
   });
+}
+
+const QUOTA_EXHAUSTED_MESSAGE =
+  "全自動AI営業ツール『Aimsales』では無制限に使えます。お申し込みはこちら https://forms.gle/FWkuxr8HenuLkARC7";
+
+const normalizeQuotaNumber = (value) => {
+  if (value === Infinity) return Infinity;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.max(0, Math.floor(numeric));
+};
+
+async function getLocalQuotaSnapshot() {
+  if (!quotaAPI?.remainingQuota) return null;
+  try {
+    const localState = await quotaAPI.remainingQuota(RULES);
+    if (!localState) return null;
+    const remaining = normalizeQuotaNumber(localState.remaining);
+    const limit = normalizeQuotaNumber(localState.limit);
+    const used = normalizeQuotaNumber(localState.used);
+    const hasQuota = remaining === null || remaining === Infinity || remaining > 0;
+    return {
+      remaining,
+      limit,
+      daily_limit: limit,
+      used,
+      mode: hasQuota ? "priority" : "blocked",
+      message: hasQuota ? "" : QUOTA_EXHAUSTED_MESSAGE,
+      source: "local"
+    };
+  } catch (err) {
+    console.warn("[AutoForm] failed to read local quota snapshot", err);
+    return null;
+  }
+}
+
+async function resolveCurrentQuotaSnapshot() {
+  try {
+    await ensureLastQuotaLoaded();
+  } catch (_) {
+    // ignored; fall back to other sources
+  }
+  if (lastServerQuota) return lastServerQuota;
+  const localSnapshot = await getLocalQuotaSnapshot();
+  if (localSnapshot) return localSnapshot;
+  return RUNTIME?.quota || null;
+}
+
+async function maybeApplyFreeThrottlingAndConsumeQuota() {
+  await ensureRuntimeConfigReady();
+  if (!IS_FREE_EDITION || !quotaAPI?.remainingQuota) {
+    return { mode: "bypass" };
+  }
+  const state = await quotaAPI.remainingQuota(RULES);
+  if (state.remaining === Infinity) {
+    return { mode: "priority", remaining: Infinity };
+  }
+  if ((state.remaining ?? 0) > 0) {
+    await quotaAPI.consumePriority(1);
+    return { mode: "priority", remaining: (state.remaining ?? 1) - 1 };
+  }
+  const exhaustedError = new Error(QUOTA_EXHAUSTED_MESSAGE);
+  exhaustedError.code = "quota_exhausted";
+  exhaustedError.quota = {
+    remaining: 0,
+    limit: Number.isFinite(state.limit) ? state.limit : null,
+    daily_limit: Number.isFinite(state.limit) ? state.limit : null,
+    used: Number.isFinite(state.used) ? state.used : state.limit ?? null,
+    mode: "blocked",
+    message: QUOTA_EXHAUSTED_MESSAGE
+  };
+  throw exhaustedError;
 }
 
 function getAllFrames(tabId) {
@@ -128,6 +373,7 @@ async function runManualFillAcrossFrames(tabId) {
   const frameIds = frames.map((frame) => frame.frameId);
   await ensureContentScriptInjected(tabId, frameIds);
   const results = await Promise.all(frameIds.map((frameId) => sendCommandToFrame(tabId, frameId, "autoform_manual_fill")));
+  let quota = null;
   const summary = results.reduce(
     (acc, res) => {
       if (res?.unreachable) {
@@ -137,6 +383,9 @@ async function runManualFillAcrossFrames(tabId) {
       if (res?.error && !acc.error) {
         acc.error = res.error;
       }
+       if (!quota && res?.quota && typeof res.quota === "object") {
+         quota = res.quota;
+       }
       const applied = res?.applied || {};
       acc.success += applied.success || res?.filled || 0;
       acc.skipped += applied.skipped || 0;
@@ -145,7 +394,26 @@ async function runManualFillAcrossFrames(tabId) {
     },
     { success: 0, skipped: 0, total: 0, unreachable: 0, error: null }
   );
-  return { summary };
+  if (quota) {
+    updateLastServerQuota(quota);
+  }
+  return { summary, quota };
+}
+
+async function requestInputCountForTab(tabId) {
+  if (typeof tabId !== "number" || tabId < 0) return;
+  const hasAll = await hasAllUrlsPermission();
+  if (!hasAll) return;
+  try {
+    const frames = await getAllFrames(tabId).catch(() => [{ frameId: 0 }]);
+    const frameIds = Array.isArray(frames) && frames.length ? frames.map((frame) => frame.frameId) : [0];
+    await ensureContentScriptInjected(tabId, frameIds);
+    await Promise.all(
+      frameIds.map((frameId) => sendCommandToFrame(tabId, frameId, "autoform_request_input_count"))
+    );
+  } catch (err) {
+    console.warn("[AutoForm] failed to refresh input count", err);
+  }
 }
 
 chrome.runtime?.onInstalled?.addListener(() => {
@@ -321,12 +589,32 @@ async function gatherSystemSignals({ nonce = "" } = {}) {
   const today = new Date().toISOString().slice(0, 10);
   const baseString = `${installId || "anonymous"}|${nonce || ""}|${today}`;
   const installEphemeral = await sha256Hex(baseString);
-  return { extVersion, installEphemeral };
+  const ua = typeof navigator !== "undefined" && typeof navigator.userAgent === "string" ? navigator.userAgent : "";
+  const uaHash = await sha256Hex(`${ua}|${installId || ""}`);
+  return { extVersion, installEphemeral, uaHash };
 }
 
 async function fetchFormItems(payload, originTabId) {
+  await ensureRuntimeConfigReady();
   const { html, sendRecord, pageUrl } = payload || {};
   if (!html || !sendRecord) throw new Error("html と send_record が必要です");
+
+  const apiKey = REQUIRE_API_KEY ? await getApiKey() : null;
+  if (REQUIRE_API_KEY && !apiKey) {
+    throw new Error("APIキーが未設定です。APIキーがないと入力出来ません。");
+  }
+
+  try {
+    await maybeApplyFreeThrottlingAndConsumeQuota();
+  } catch (err) {
+    if (err?.code === "quota_exhausted") {
+      if (err.quota) {
+        updateLastServerQuota(err.quota);
+      }
+      throw err;
+    }
+    console.warn("[AutoForm] quota handling failed", err);
+  }
 
   const proof = await gatherSystemSignals({ nonce: "api_request" }).catch(() => null);
   const analysisId =
@@ -344,13 +632,29 @@ async function fetchFormItems(payload, originTabId) {
     user_info: proof || {}
   };
 
+  const authHeaders = {};
+  if (deviceAuthAPI?.getOrRefreshDeviceToken) {
+    try {
+      const deviceToken = await deviceAuthAPI.getOrRefreshDeviceToken(gatherSystemSignals, DEVICE_TOKEN_ENDPOINT);
+      if (deviceToken) {
+        authHeaders["Authorization"] = `Bearer ${deviceToken}`;
+      }
+    } catch (err) {
+      console.warn("[AutoForm] device token retrieval failed", err);
+    }
+  }
+  if (apiKey) {
+    authHeaders["X-API-Key"] = apiKey;
+  }
+
   let response;
   try {
     response = await fetch(FORM_ITEMS_ENDPOINT, {
       method: "POST",
       headers: {
         accept: "application/json",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        ...authHeaders
       },
       body: JSON.stringify(requestPayload)
     });
@@ -365,8 +669,26 @@ async function fetchFormItems(payload, originTabId) {
   } catch (_) {
     throw new Error("APIレスポンスの解析に失敗しました");
   }
-  const items = Array.isArray(data?.form_items) ? data.form_items : Array.isArray(data) ? data : [];
   const durationMs = nowMs() - startedAt;
+  const serverQuota = data?.quota && typeof data.quota === "object" ? data.quota : null;
+  if (serverQuota) {
+    updateLastServerQuota(serverQuota);
+  }
+  if (!response.ok) {
+    const errorMessage =
+      data?.message ||
+      (response.status === 429 ? QUOTA_EXHAUSTED_MESSAGE : `APIリクエストに失敗しました (${response.status})`);
+    const quotaError = new Error(errorMessage);
+    quotaError.status = response.status;
+    if (response.status === 429) {
+      quotaError.code = "quota_exhausted";
+    }
+    if (serverQuota) {
+      quotaError.quota = serverQuota;
+    }
+    throw quotaError;
+  }
+  const items = Array.isArray(data?.form_items) ? data.form_items : Array.isArray(data) ? data : [];
 
   const htmlLogId = typeof data?.html_log_id === "string" && data.html_log_id.trim() ? data.html_log_id.trim() : null;
 
@@ -393,7 +715,7 @@ async function fetchFormItems(payload, originTabId) {
       })();
       await fetch(ENV_UPLOAD_ENDPOINT, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({
           analysis_id: data?.analysis_id || analysisId,
           token: data.env_token,
@@ -408,17 +730,50 @@ async function fetchFormItems(payload, originTabId) {
     }
   }
 
-  return { items, durationMs };
+  const throttleMode = (() => {
+    if (!IS_FREE_EDITION) return "unlimited";
+    if (serverQuota?.mode === "blocked") return "blocked";
+    const remaining = Number(serverQuota?.remaining);
+    if (Number.isFinite(remaining) && remaining <= 0) return "blocked";
+    return "priority";
+  })();
+
+  return { items, durationMs, throttleMode, quota: serverQuota };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message?.type) return;
 
+  if (message.type === "autoform_get_quota_state") {
+    ensureRuntimeConfigReady()
+      .then(() => resolveCurrentQuotaSnapshot())
+      .then((quota) => {
+        sendResponse?.({
+          quota,
+          edition: EDITION
+        });
+      })
+      .catch((error) => sendResponse({ error: error?.message || "config_failed" }));
+    return true;
+  }
+
   if (message.type === "autoform_fetch_form_items") {
     const originTabId = sender?.tab?.id;
     fetchFormItems(message.payload, originTabId)
-      .then((result) => sendResponse({ items: result.items, durationMs: result.durationMs }))
-      .catch((err) => sendResponse({ error: err?.message || "APIエラー" }));
+      .then((result) =>
+        sendResponse({
+          items: result.items,
+          durationMs: result.durationMs,
+          throttleMode: result.throttleMode,
+          quota: result.quota
+        })
+      )
+      .catch((err) =>
+        sendResponse({
+          error: err?.message || "APIエラー",
+          quota: err?.quota || null
+        })
+      );
     return true;
   }
 
@@ -462,8 +817,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
     runManualFillAcrossFrames(tabId)
-      .then((result) => sendResponse({ ok: true, summary: result.summary }))
-      .catch((error) => sendResponse({ error: error?.message || "manual_fill_failed" }));
+      .then((result) => sendResponse({ ok: true, summary: result.summary, quota: result.quota || null }))
+      .catch((error) =>
+        sendResponse({
+          error: error?.message || "manual_fill_failed",
+          quota: error?.quota || null
+        })
+      );
     return true;
   }
 });
@@ -474,7 +834,14 @@ if (chrome?.webNavigation?.onCommitted) {
       recordTabUrl(details.tabId, details.url);
       frameInputCounts.delete(details.tabId);
       updateBadgeCount(details.tabId, null);
-      ensureContentScriptForTab(details.tabId, details.url).catch(() => {});
+      (async () => {
+        try {
+          await ensureContentScriptForTab(details.tabId, details.url);
+        } catch (_) {
+          // ignore
+        }
+        await requestInputCountForTab(details.tabId);
+      })();
     }
   });
 }
@@ -482,7 +849,14 @@ if (chrome?.webNavigation?.onCommitted) {
 if (chrome?.tabs?.onUpdated) {
   chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.status === "complete") {
-      ensureContentScriptForTab(tabId, tab?.url).catch(() => {});
+      (async () => {
+        try {
+          await ensureContentScriptForTab(tabId, tab?.url);
+        } catch (_) {
+          // ignore
+        }
+        await requestInputCountForTab(tabId);
+      })();
     }
   });
 }

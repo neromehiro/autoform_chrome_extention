@@ -18,11 +18,6 @@
         color: #0f172a;
         background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 60%, #e0f2fe 100%);
       }
-      h1 {
-        font-size: 18px;
-        margin: 0;
-        letter-spacing: 0.02em;
-      }
       a {
         color: #2563eb;
         text-decoration: none;
@@ -30,46 +25,84 @@
       a:hover {
         text-decoration: underline;
       }
-      .hero-card {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
+      .surface-card {
+        background: #ffffff;
+        border-radius: 16px;
+        padding: 16px;
+        box-shadow: 0 14px 24px rgba(15, 23, 42, 0.08);
+        margin-bottom: 16px;
       }
-      .hero-header {
-        display: flex;
-        align-items: flex-start;
-        gap: 12px;
-        width: 100%;
+      .priority-card {
+        background: linear-gradient(135deg, #eef2ff, #e0f2fe);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 10px 20px rgba(15, 23, 42, 0.06);
       }
-      .hero-info {
+      .priority-header {
         display: flex;
-        flex-direction: column;
-        gap: 4px;
-        flex: 1 1 auto;
-        min-width: 0;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
       }
-      .hero-title {
-        font-size: 16px;
+      .priority-title {
+        margin: 0;
+        font-size: 14px;
         font-weight: 700;
-        margin: 0;
-        color: #0f172a;
-      }
-      .hero-subtitle {
-        margin: 0;
-        font-size: 12px;
+        letter-spacing: 0.04em;
         color: #475569;
       }
-      .hero-status {
-        margin: 0;
+      .priority-count {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        margin: 8px 0 0;
+        width: 100%;
+        color: #0f172a;
+      }
+      .priority-count-label {
         font-size: 11px;
-        color: #64748b;
+        letter-spacing: 0.2em;
+        color: #94a3b8;
+        text-transform: uppercase;
       }
-      .plan-status {
+      .priority-figure {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 10px 18px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.65);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 6px 18px rgba(79, 70, 229, 0.15);
+      }
+      .priority-warning {
+        display: none;
+        margin-top: 8px;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 10px;
+        background: rgba(248, 113, 113, 0.12);
+        color: #b91c1c;
+        font-size: 12px;
         font-weight: 700;
-        color: #dc2626;
       }
-      .plan-status.plan-status-paid {
-        color: #059669;
+      .priority-warning::before {
+        content: "!";
+        font-size: 13px;
+      }
+      .priority-warning.is-visible {
+        display: inline-flex;
+      }
+      .priority-number {
+        font-size: 40px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        line-height: 1;
+      }
+      .priority-unit {
+        font-size: 16px;
+        font-weight: 600;
+        color: #475569;
       }
       .plan-badge {
         display: inline-flex;
@@ -81,42 +114,17 @@
         font-weight: 600;
         background: rgba(248, 113, 113, 0.15);
         color: #dc2626;
-        width: fit-content;
       }
       .plan-badge.plan-badge-paid {
         background: rgba(16, 185, 129, 0.15);
         color: #047857;
       }
-      .hero-icon {
-        width: 56px;
-        height: 56px;
-        border-radius: 14px;
-        object-fit: cover;
-        box-shadow: 0 18px 26px rgba(79, 70, 229, 0.3);
-        flex-shrink: 0;
+      .plan-status {
+        font-weight: 700;
+        color: #dc2626;
       }
-      .hero-divider {
-        height: 1px;
-        background: rgba(148, 163, 184, 0.35);
-        margin: 4px 0;
-      }
-      .hero-footer {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-      }
-      .surface-card {
-        background: #ffffff;
-        border-radius: 16px;
-        padding: 16px;
-        box-shadow: 0 14px 24px rgba(15, 23, 42, 0.08);
-        margin-bottom: 16px;
-      }
-      .promo-text {
-        font-size: 13px;
-        line-height: 1.6;
-        color: #475569;
-        margin: 0;
+      .plan-status.plan-status-paid {
+        color: #059669;
       }
       .primary-btn,
       .ghost-btn,
@@ -152,28 +160,63 @@
         color: #0f172a;
         border: 1px solid rgba(148, 163, 184, 0.7);
       }
-      .master-control-card {
-        margin-bottom: 18px;
+      .manual-card {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
       }
-      .master-toggle-container {
+      .manual-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 16px;
-        padding-bottom: 14px;
-        margin-bottom: 12px;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+        gap: 12px;
       }
-      .master-toggle-title {
-        font-size: 15px;
-        font-weight: 700;
-        margin: 0;
-        color: #0f172a;
+      .manual-title-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
       }
-      .master-toggle-desc {
-        margin: 6px 0 0;
+      .status-label {
         font-size: 12px;
-        color: #64748b;
+        font-weight: 600;
+        letter-spacing: 0;
+        color: #475569;
+        text-transform: none;
+      }
+      .manual-cta {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .manual-cta-note {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 8px 10px;
+        border-radius: 12px;
+        background: rgba(226, 232, 240, 0.2);
+      }
+      .manual-cta-note .status-label {
+        font-size: 11px;
+      }
+      .manual-cta-note .status-text {
+        margin: 0;
+        font-size: 11px;
+      }
+      .app-logo {
+        width: 40px;
+        height: 40px;
+        object-fit: contain;
+        border-radius: 8px;
+        box-shadow: 0 6px 12px rgba(15, 23, 42, 0.15);
+        background: #fff;
+      }
+      .manual-title {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 700;
+        color: #0f172a;
       }
       .ios-switch {
         position: relative;
@@ -214,28 +257,268 @@
       .ios-switch input:checked + .ios-slider::after {
         transform: translateX(28px);
       }
-      .hero-switch {
-        margin-left: auto;
-        flex-shrink: 0;
-      }
       .status-text {
-        margin: 10px 0 0;
+        margin: 0;
         font-size: 12px;
         color: #64748b;
+      }
+      .status-text:empty {
+        display: none;
+      }
+      .status-text + .status-text {
+        margin-top: 8px;
+      }
+      .priority-note {
+        margin-top: 5px;
       }
       .detection-note {
         margin: 0;
         font-size: 13px;
         font-weight: 600;
         color: #0f172a;
-        flex: 1 1 auto;
-        min-width: 0;
       }
-      .detection-note.error {
-        color: #dc2626;
-      }
+      .detection-note.error,
+      .detection-status.error,
       .status-text.error {
         color: #dc2626;
+      }
+      .promo-text {
+        font-size: 13px;
+        line-height: 1.6;
+        color: #475569;
+        margin: 0;
+      }
+      .ad-feed-card {
+        padding-bottom: 12px;
+      }
+      .ad-section-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+      .ad-section-title {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .section-eyebrow {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.25em;
+        text-transform: uppercase;
+        color: #6366f1;
+      }
+      .ad-section-header .section-label {
+        margin: 0;
+      }
+      .section-label.promo-label {
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        color: #0f172a;
+        position: relative;
+        white-space: nowrap;
+        line-height: 1.3;
+      }
+      .section-label.promo-label::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 30%;
+        bottom: -5px;
+        height: 6px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(99, 102, 241, 0.35), rgba(14, 165, 233, 0));
+      }
+      .ad-section-pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 12px;
+        border-radius: 999px;
+        background: rgba(14, 165, 233, 0.12);
+        color: #0284c7;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      .promo-carousel {
+        display: flex;
+        gap: 12px;
+        overflow-x: auto;
+        padding-bottom: 6px;
+        scroll-snap-type: x mandatory;
+        -webkit-overflow-scrolling: touch;
+        scroll-behavior: smooth;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+      }
+      .promo-carousel:focus-visible {
+        outline: 2px solid #2563eb;
+        outline-offset: 2px;
+      }
+      .promo-carousel::-webkit-scrollbar {
+        display: none;
+      }
+      .promo-card {
+        flex: 0 0 calc(100% - 48px);
+        min-width: 240px;
+        border-radius: 14px;
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        background: linear-gradient(135deg, rgba(248, 250, 252, 0.95), rgba(224, 242, 254, 0.9));
+        padding: 16px;
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+        scroll-snap-align: start;
+        color: inherit;
+      }
+      .promo-card:only-child {
+        flex-basis: 100%;
+        min-width: 100%;
+      }
+      .promo-card a {
+        color: #2563eb;
+      }
+      .promo-card *:last-child {
+        margin-bottom: 0;
+      }
+      .promo-card-eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: #1d4ed8;
+        background: rgba(59, 130, 246, 0.15);
+      }
+      .promo-card-eyebrow.is-outline {
+        border: 1px solid rgba(99, 102, 241, 0.35);
+        color: #4338ca;
+        background: rgba(248, 250, 252, 0.45);
+      }
+      .promo-card-title {
+        margin: 14px 0 10px;
+        font-size: 18px;
+        font-weight: 800;
+        line-height: 1.4;
+        color: #0f172a;
+      }
+      .promo-card-lead {
+        margin: 0 0 14px;
+        font-size: 13px;
+        line-height: 1.7;
+        color: #475569;
+      }
+      .promo-card-highlights {
+        margin: 0 0 16px;
+        padding-left: 18px;
+        color: #0f172a;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .promo-card-highlights li {
+        margin-bottom: 6px;
+      }
+      .promo-card-metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+        gap: 10px;
+        margin: 0 0 12px;
+        padding: 12px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.6);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+      }
+      .promo-card-metrics > div {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .promo-card-metrics dt {
+        margin: 0;
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        color: #64748b;
+        text-transform: uppercase;
+      }
+      .promo-card-metrics dd {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .promo-card-cta {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        width: 100%;
+        margin-top: 4px;
+        padding: 11px 16px;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        color: #fff;
+        background: linear-gradient(135deg, #0ea5e9, #6366f1);
+        box-shadow: 0 14px 22px rgba(99, 102, 241, 0.35);
+        border: none;
+        transition: transform 0.18s ease, box-shadow 0.18s ease;
+      }
+      .promo-card-cta::after {
+        content: ">";
+        font-weight: 700;
+      }
+      .promo-card-cta.is-secondary {
+        color: #0f172a;
+        background: rgba(255, 255, 255, 0.85);
+        border: 1px solid rgba(148, 163, 184, 0.45);
+        box-shadow: none;
+      }
+      .promo-card-cta:is(:hover, :focus-visible) {
+        text-decoration: none;
+        transform: translateY(-1px);
+        box-shadow: 0 18px 28px rgba(99, 102, 241, 0.4);
+      }
+      .promo-carousel-dots {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .promo-carousel-dots.is-hidden {
+        display: none;
+      }
+      .promo-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        border: none;
+        padding: 0;
+        background: rgba(148, 163, 184, 0.55);
+        cursor: pointer;
+        transition: all 0.25s ease;
+      }
+      .promo-dot.is-active {
+        width: 28px;
+        background: linear-gradient(135deg, #6366f1, #14b8a6);
+        box-shadow: 0 8px 16px rgba(79, 70, 229, 0.3);
+      }
+      .promo-dot:focus-visible {
+        outline: 2px solid rgba(59, 130, 246, 0.5);
+        outline-offset: 2px;
+      }
+      .dynamic-info-content {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
       }
       .section-label {
         font-size: 13px;
@@ -310,13 +593,6 @@
       }
       .toggle-label.secondary {
         color: #475569;
-        font-size: 13px;
-      }
-      .analysis-log,
-      .detail-status,
-      .analysis-actions,
-      .analysis-copy-feedback {
-        display: none;
       }
       .api-key-card {
         margin-top: 8px;
@@ -351,57 +627,67 @@
     </style>
   </head>
   <body>
-    <div class="surface-card master-control-card hero-card">
-      <div class="hero-header">
-        <img src="aimsales_logo.png" alt="AimSales" class="hero-icon" />
-        <div class="hero-info">
-          <p class="hero-title">AutoForm by Aimsales</p>
-          <p class="hero-subtitle">最も優れたAIフォーム入力支援ツール</p>
-          <span id="plan-badge" class="plan-badge">無料版</span>
-        </div>
+    <div class="surface-card priority-card" data-block="priority">
+      <div class="priority-header">
+        <p class="priority-title">本日の利用可能数</p>
+        <span id="plan-badge" class="plan-badge">無料版</span>
       </div>
-      <div class="hero-divider"></div>
-      <div class="hero-footer">
-        <p class="detection-note" id="input-count">入力欄を検知中です…</p>
+      <p class="priority-count" aria-live="polite">
+        <span class="priority-count-label">本日の残り回数</span>
+        <span class="priority-figure">
+          <span class="priority-number" id="priority-remaining" data-priority-number>--</span>
+          <span class="priority-unit">回</span>
+        </span>
+        <span class="priority-warning" id="priority-warning" aria-hidden="true">本日の上限に達しました</span>
+      </p>
+      <p id="priority-note" class="status-text priority-note" style="display:none;">
+        全自動AI営業ツール『Aimsales』では無制限に使えます。お申し込みはこちら
+        <a href="https://forms.gle/FWkuxr8HenuLkARC7" target="_blank" rel="noreferrer noopener">https://forms.gle/FWkuxr8HenuLkARC7</a>
+      </p>
+    </div>
+
+    <div class="surface-card manual-card" data-block="manual">
+      <div class="manual-header">
+        <div class="manual-title-group">
+          <img src="aimsales_logo.png" alt="Aimsales" class="app-logo" />
+          <p class="manual-title">Autoform by Aimsales</p>
+        </div>
         <label class="ios-switch hero-switch">
           <input type="checkbox" id="extension-master-toggle" aria-label="拡張機能のON/OFF" />
           <span class="ios-slider" aria-hidden="true"></span>
         </label>
       </div>
-      <p class="hero-status" id="master-toggle-status-text">
-        拡張機能は有効です（<span id="plan-status" class="plan-status">無料版</span>）
-      </p>
+      <div class="manual-cta">
+        <button id="fill-now" class="primary-btn">入力を実行</button>
+        <div class="manual-cta-note">
+          <span class="status-label detection-status" id="input-count" aria-live="polite">5件以上の入力欄が検知されました。</span>
+          <p id="manual-status" class="status-text"></p>
+        </div>
+      </div>
     </div>
 
-    <div class="surface-card">
-      <button id="fill-now" class="primary-btn">入力を実行</button>
-      <p id="manual-status" class="status-text">未実行</p>
-    </div>
-
-    <div class="surface-card">
-      <p class="promo-text">
-        <strong>【無料版の制限】</strong><br />
-        共有サーバーでの処理を行っております。<br />
-        なので処理に時間がかかる場合がございます。<br />
-        Aimsalesユーザーだと、強力な専用サーバーで処理されるので5秒程度かかっていたフォーム入力が常に1秒以内で完了します。<br />
-        Aimsalesのお申し込みはこちら。
-        <a href="https://forms.gle/FWkuxr8HenuLkARC7" target="_blank" rel="noreferrer noopener">
-          https://forms.gle/FWkuxr8HenuLkARC7
-        </a>
-      </p>
-    </div>
-
-    <div class="surface-card">
-      <p class="promo-text">
-        <strong>【Aimsalesとは】</strong><br />
-        Aimsalesでは生成AIによる高品質な文章でフォーム営業が可能(返信率80倍以上⤴️)<br />
-        さらに500万社以上の企業データにより、メール営業、フォーム一括営業など可能。詳しくはこちら →
-        <a href="https://aimsales.jp/" target="_blank" rel="noreferrer noopener">https://aimsales.jp/</a> 。<br />
-        お申し込みはこちらから。
-        <a href="https://forms.gle/FWkuxr8HenuLkARC7" target="_blank" rel="noreferrer noopener">
-          https://forms.gle/FWkuxr8HenuLkARC7
-        </a>
-      </p>
+    <div class="surface-card ad-feed-card" id="dynamic-info-card" data-block="promo" style="display:none;">
+      <div class="ad-section-header">
+        <div class="ad-section-title">
+          <span class="section-eyebrow">AIMSALES NEWS</span>
+          <span class="section-label promo-label">Aimsalesからのお知らせ</span>
+        </div>
+        <span class="ad-section-pill">最新情報</span>
+      </div>
+      <div
+        id="dynamic-info-content"
+        class="promo-carousel"
+        role="list"
+        aria-label="Aimsalesからのお知らせ一覧"
+        tabindex="0"
+      ></div>
+      <div
+        id="promo-carousel-dots"
+        class="promo-carousel-dots is-hidden"
+        role="tablist"
+        aria-label="お知らせのスライド切り替え"
+        aria-hidden="true"
+      ></div>
     </div>
 
     <div class="surface-card" id="input-config-card">
@@ -496,9 +782,7 @@
           画面右下に、常にボタンを表示する
         </label>
       </div>
-      <p id="floating-button-status" class="status-text" style="margin-top:4px;">
-        右下のボタンは表示されません
-      </p>
+      <p id="floating-button-status" class="status-text" style="margin-top:4px;display:none;"></p>
       <div class="api-key-card">
         <label class="send-field-label" for="api-key-input">APIキー</label>
         <input
@@ -517,6 +801,8 @@
     </div>
 
     <script src="settings.js" defer></script>
+    <script src="auth.js" defer></script>
+    <script src="config.js" defer></script>
     <script src="popup.js" defer></script>
   </body>
 </html>
