@@ -26,8 +26,7 @@
     "autoform_count_inputs",
     "autoform_count_forms",
     "autoform_apply_send_content",
-    "autoform_request_input_count",
-    "autoform_collect_frame_html"
+    "autoform_request_input_count"
   ]);
   const SEND_CONTENT_STORAGE_KEY = "autoformSendContent";
   const FLOATING_BUTTON_STORAGE_KEY = "autoformShowFloatingButton";
@@ -1199,44 +1198,35 @@
         });
         return { applied: { total: 0, success: 0, skipped: 0 }, skipped: true };
       }
+      const html = getPageHtml();
+      if (!html) {
+        return { error: "HTMLが取得できませんでした" };
+      }
       try {
-        const result = await requestManualFillAcrossFrames(context || null);
-        if (result?.ok !== true) {
-          const err = new Error(result?.error || "入力に失敗しました");
-          if (result?.quota && typeof result.quota === "object") {
-            err.quota = result.quota;
+        const sendRecord = await getSendRecordFromStorage();
+        const pageUrl = (() => {
+          try {
+            return window.location?.href || null;
+          } catch (_) {
+            return null;
           }
-          if (result?.code) {
-            err.code = result.code;
-          }
-          if (result?.planStatus) {
-            err.planStatus = result.planStatus;
-          }
-          throw err;
-        }
-        const summary = result?.summary || {};
-        const applied = {
-          success: summary.success || 0,
-          skipped: summary.skipped || 0,
-          total: summary.total || 0
-        };
-        const quota = result?.quota || null;
-        const planStatus = result?.planStatus || null;
-        const durationMs = typeof result?.durationMs === "number" ? result.durationMs : null;
-        lastThrottleMode = result?.throttleMode || lastThrottleMode;
+        })();
+        const { items, durationMs, throttleMode, quota, planStatus } = await requestFormItemsViaBackground(html, sendRecord, pageUrl);
+        lastThrottleMode = throttleMode || lastThrottleMode;
+        const applied = applyJsonInstructions(items);
         if (applied.success > 0) {
-          const durationSeconds = durationMs != null ? durationMs / 1000 : null;
+          const durationSeconds = typeof durationMs === "number" ? durationMs / 1000 : null;
           showCompletionNotice(durationSeconds, lastThrottleMode);
         }
         applyQuotaStateToFloatingButton(quota);
         if (isTopFrame) {
           reportFillResultToBackground({
             ok: true,
-            applied: applied.success,
-            total: applied.total,
-            quota,
-            planStatus,
-            durationMs,
+            applied: applied?.success || 0,
+            total: typeof applied?.total === "number" ? applied.total : Array.isArray(items) ? items.length : null,
+            quota: quota || null,
+            planStatus: planStatus || null,
+            durationMs: typeof durationMs === "number" ? durationMs : null,
             source: context || null
           });
         }
@@ -1297,40 +1287,47 @@
     });
   }
 
-  function requestManualFillAcrossFrames(source = null) {
-    if (!chrome?.runtime?.sendMessage) {
-      return Promise.resolve({ error: "runtime_unavailable" });
-    }
-    return getSendRecordFromStorage()
-      .catch(() => ({ ...DEFAULT_SEND_RECORD }))
-      .then((sendRecord) => {
-        const pageUrl = (() => {
-          try {
-            return window.location?.href || null;
-          } catch (_) {
-            return null;
+  function requestFormItemsViaBackground(html, sendRecord, pageUrl) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        {
+          type: "autoform_fetch_form_items",
+          payload: { html, sendRecord, pageUrl }
+        },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
           }
-        })();
-        return new Promise((resolve) => {
-          try {
-            chrome.runtime.sendMessage(
-              {
-                type: "autoform_manual_fill_all_frames",
-                payload: { sendRecord, pageUrl, source: source || "manual-fill" }
-              },
-              (response) => {
-                if (chrome.runtime.lastError) {
-                  resolve({ error: chrome.runtime.lastError.message });
-                  return;
-                }
-                resolve(response || {});
-              }
-            );
-          } catch (err) {
-            resolve({ error: err?.message || "manual_fill_failed" });
+          if (response?.error) {
+            const err = new Error(response.error);
+            if (response?.quota && typeof response.quota === "object") {
+              err.quota = response.quota;
+            }
+            if (response?.code) {
+              err.code = response.code;
+            }
+            if (response?.planStatus) {
+              err.planStatus = response.planStatus;
+            }
+            reject(err);
+            return;
           }
-        });
-      });
+          const items = response?.items;
+          if (!Array.isArray(items)) {
+            reject(new Error("APIレスポンスが配列形式ではありません"));
+            return;
+          }
+          resolve({
+            items,
+            durationMs: response?.durationMs,
+            throttleMode: response?.throttleMode,
+            quota: response?.quota || null,
+            planStatus: response?.planStatus || null
+          });
+        }
+      );
+    });
   }
 
   function clearFloatingButtonCompletionTimer() {
@@ -1786,18 +1783,6 @@
       return {
         forms: countActualForms(document),
         controls: countFormControls(document)
-      };
-    }
-    if (command === "autoform_collect_frame_html") {
-      return {
-        html: getPageHtml(),
-        url: (() => {
-          try {
-            return window.location?.href || null;
-          } catch (_) {
-            return null;
-          }
-        })()
       };
     }
     if (command === "autoform_apply_send_content") {

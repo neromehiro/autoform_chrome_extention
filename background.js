@@ -40,25 +40,6 @@ const FLOATING_BUTTON_STORAGE_KEY = "autoformShowFloatingButton";
 const MASTER_STORAGE_KEY = "autoformEnabled";
 const AUTO_RUN_STORAGE_KEY = "autoformAutoRunOnOpen";
 const AIMSALES_SIGNUP_URL = "https://forms.gle/FWkuxr8HenuLkARC7";
-const SEND_CONTENT_STORAGE_KEY = "autoformSendContent";
-const DEFAULT_SEND_RECORD = {
-  name: "営業 太郎",
-  name_kana: "えいぎょう たろう",
-  company: "サンプル株式会社",
-  部署: "営業部",
-  住所: "東京都中央区架空町1-2-3 サンプルビル 5F",
-  postal_code: "123-4567",
-  company_kana: "さんぷる かぶしきがいしゃ",
-  prefecture: "東京都",
-  email: "k.tanaka@sample.co.jp",
-  tel: "03-0000-1111",
-  fax: "03-0000-1111",
-  title: "Web制作・広告運用のご提案",
-  業種: "Web制作・デジタルマーケティング",
-  URL: "https://www.sample.co.jp",
-  remark:
-    "お世話になっております。\n株式会社サンプルの営業部の田中です。\n\n突然のご連絡失礼いたします。\n弊社ではWeb制作や広告運用、SNS代行などを幅広く行っております。\nもし貴社でもそういったことをお考えでしたら、ぜひご相談ください。\n\nこれまで多くの企業様にご利用いただいており、皆様からご好評をいただいております。\nコーポレートサイトやECサイト、採用サイトなど制作可能です。\n\n現在、まさにサイト作成でお悩みでしたら、\n一度、ぜひお打ち合わせさせてください。\n\n日程調整はこちらからお願いいたしますhttps://app.spirinc.com/patterns/availability-sharing/4HBCM9QxxRR7l4zx69xoq/confirm\n\nよろしくお願いいたします。\n\n株式会社サンプル 営業部 田中 一真"
-};
 
 const FALLBACK_RULES = {
   priority: { initialDays: 7, dailyInitial: 50, dailyAfter: 10 },
@@ -513,183 +494,6 @@ function sendCommandToFrame(tabId, frameId, message) {
   });
 }
 
-function isExtensionPageUrl(url) {
-  return typeof url === "string" && url.startsWith("chrome-extension://");
-}
-
-function queryFirstActiveTab(options) {
-  return new Promise((resolve) => {
-    if (!chrome?.tabs?.query) {
-      resolve(null);
-      return;
-    }
-    try {
-      chrome.tabs.query(options, (tabs) => {
-        if (chrome.runtime?.lastError) {
-          resolve(null);
-          return;
-        }
-        const list = Array.isArray(tabs) ? tabs : [];
-        const preferred = list.find((tab) => typeof tab?.id === "number" && !isExtensionPageUrl(tab?.url));
-        const fallback = preferred || list.find((tab) => typeof tab?.id === "number") || null;
-        resolve(fallback || null);
-      });
-    } catch (_) {
-      resolve(null);
-    }
-  });
-}
-
-async function resolveManualFillTabId(sender, message) {
-  const tabIdFromSender = typeof sender?.tab?.id === "number" ? sender.tab.id : null;
-  if (typeof tabIdFromSender === "number") {
-    return tabIdFromSender;
-  }
-  const tabIdFromPayload = typeof message?.payload?.tabId === "number" ? message.payload.tabId : null;
-  if (typeof tabIdFromPayload === "number") {
-    return tabIdFromPayload;
-  }
-  if (!chrome?.tabs?.query) {
-    return null;
-  }
-  const attempts = [
-    { active: true, lastFocusedWindow: true },
-    { active: true, currentWindow: true },
-    { active: true }
-  ];
-  for (const options of attempts) {
-    const tab = await queryFirstActiveTab(options);
-    if (tab && typeof tab.id === "number") {
-      return tab.id;
-    }
-  }
-  return null;
-}
-
-async function runManualFillAcrossFrames(tabId, options = {}) {
-  const hasAll = await hasAllUrlsPermission();
-  if (!hasAll) {
-    throw new Error("missing_all_urls_permission");
-  }
-  const frames = await getAllFrames(tabId);
-  const frameIds = frames.map((frame) => frame.frameId);
-  await ensureContentScriptInjected(tabId, frameIds);
-
-  const frameHtmlResults = await Promise.all(
-    frameIds.map((frameId) => sendCommandToFrame(tabId, frameId, { type: "autoform_collect_frame_html" }))
-  );
-
-  const collectedFrames = [];
-  let unreachable = 0;
-  frameIds.forEach((frameId, index) => {
-    const response = frameHtmlResults[index];
-    if (response?.unreachable) {
-      unreachable += 1;
-      return;
-    }
-    const html = typeof response?.html === "string" ? response.html : "";
-    if (!html.trim()) {
-      return;
-    }
-    collectedFrames.push({
-      frameId,
-      url: typeof response?.url === "string" && response.url ? response.url : frames[index]?.url || null,
-      html
-    });
-  });
-
-  if (!collectedFrames.length) {
-    throw new Error("no_html_available");
-  }
-
-  const sendRecord = await getSendRecordSnapshot(options?.sendRecord);
-  const pageUrl =
-    (typeof options?.pageUrl === "string" && options.pageUrl.trim()) ||
-    frames.find((frame) => frame.frameId === 0)?.url ||
-    collectedFrames[0]?.url ||
-    null;
-
-  const fetchResult = await fetchFormItems(
-    {
-      frames: collectedFrames,
-      sendRecord,
-      pageUrl
-    },
-    tabId
-  );
-
-  const quota = fetchResult?.quota || null;
-  if (quota) {
-    updateLastServerQuota(quota);
-  }
-
-  const itemsByFrameId = new Map();
-  if (Array.isArray(fetchResult?.frameItems)) {
-    fetchResult.frameItems.forEach((entry) => {
-      const frameId =
-        typeof entry?.frame_id === "number"
-          ? entry.frame_id
-          : typeof entry?.frameId === "number"
-            ? entry.frameId
-            : null;
-      if (frameId === null) return;
-      const items = Array.isArray(entry?.items) ? entry.items : [];
-      itemsByFrameId.set(frameId, items);
-    });
-  } else if (Array.isArray(fetchResult?.items)) {
-    itemsByFrameId.set(collectedFrames[0]?.frameId ?? 0, fetchResult.items);
-  }
-
-  const applyTargets = collectedFrames.map((frame) => ({
-    frameId: frame.frameId,
-    items: itemsByFrameId.get(frame.frameId) || []
-  }));
-
-  const applicationResults = await Promise.all(
-    applyTargets.map((target) =>
-      sendCommandToFrame(tabId, target.frameId, { type: "autoform_execute_json", payload: target.items })
-    )
-  );
-
-  const summary = applyTargets.reduce(
-    (acc, target, index) => {
-      const res = applicationResults[index];
-      if (res?.unreachable) {
-        acc.unreachable += 1;
-        return acc;
-      }
-      if (res?.error && !acc.error) {
-        acc.error = res.error;
-      }
-      const applied = res?.applied || {};
-      acc.success += applied.success || 0;
-      acc.skipped += applied.skipped || 0;
-      acc.total += applied.total || 0;
-      return acc;
-    },
-    { success: 0, skipped: 0, total: 0, unreachable }
-  );
-
-  recordLastFillResult({
-    ok: !summary.error,
-    applied: summary.success,
-    total: summary.total,
-    durationMs: fetchResult?.durationMs || null,
-    quota,
-    planStatus: fetchResult?.planStatus || null,
-    source: options?.source || "manual-fill",
-    timestamp: Date.now()
-  });
-
-  return {
-    summary,
-    quota,
-    planStatus: fetchResult?.planStatus || null,
-    durationMs: fetchResult?.durationMs || null,
-    throttleMode: fetchResult?.throttleMode || null
-  };
-}
-
 async function requestInputCountForTab(tabId) {
   if (typeof tabId !== "number" || tabId < 0) return;
   const hasAll = await hasAllUrlsPermission();
@@ -817,17 +621,6 @@ function nowMs() {
   return hasPerformance ? performance.now() : Date.now();
 }
 
-function createHtmlPreview(html) {
-  if (typeof html !== "string") {
-    return { preview: "", length: 0, truncated: false };
-  }
-  const limit = 2000;
-  if (html.length <= limit) {
-    return { preview: html, length: html.length, truncated: false };
-  }
-  return { preview: `${html.slice(0, limit)}...`, length: html.length, truncated: true };
-}
-
 async function sha256Hex(input) {
   try {
     if (!globalThis.crypto?.subtle) throw new Error("subtle_unavailable");
@@ -884,56 +677,10 @@ async function gatherSystemSignals({ nonce = "" } = {}) {
   return { extVersion, installEphemeral, uaHash };
 }
 
-function cloneDefaultSendRecord() {
-  return JSON.parse(JSON.stringify(DEFAULT_SEND_RECORD));
-}
-
-async function getSendRecordSnapshot(override) {
-  if (override && typeof override === "object" && !Array.isArray(override)) {
-    return { ...cloneDefaultSendRecord(), ...override };
-  }
-  if (!chrome?.storage?.local) {
-    return cloneDefaultSendRecord();
-  }
-  return new Promise((resolve) => {
-    try {
-      chrome.storage.local.get(SEND_CONTENT_STORAGE_KEY, (res) => {
-        if (chrome.runtime?.lastError) {
-          resolve(cloneDefaultSendRecord());
-          return;
-        }
-        const stored = res?.[SEND_CONTENT_STORAGE_KEY];
-        if (stored && typeof stored === "object" && !Array.isArray(stored)) {
-          resolve({ ...cloneDefaultSendRecord(), ...stored });
-          return;
-        }
-        resolve(cloneDefaultSendRecord());
-      });
-    } catch (_) {
-      resolve(cloneDefaultSendRecord());
-    }
-  });
-}
-
 async function fetchFormItems(payload, originTabId) {
   await ensureRuntimeConfigReady();
-  const { html, frames, sendRecord, pageUrl } = payload || {};
-  if (!sendRecord) throw new Error("send_record が必要です");
-
-  const frameEntries = Array.isArray(frames)
-    ? frames
-        .map((entry) => ({
-          frameId: typeof entry?.frameId === "number" ? entry.frameId : typeof entry?.frame_id === "number" ? entry.frame_id : null,
-          url: entry?.url || entry?.frame_url || null,
-          html: typeof entry?.html === "string" ? entry.html : ""
-        }))
-        .filter((entry) => entry.frameId !== null && entry.html.trim())
-    : [];
-  const usesFrameBundle = frameEntries.length > 0;
-
-  if (!usesFrameBundle && (!html || !html.trim())) {
-    throw new Error("html または frames が必要です");
-  }
+  const { html, sendRecord, pageUrl } = payload || {};
+  if (!html || !sendRecord) throw new Error("html と send_record が必要です");
 
   const requiresApiKeyForRequests = Boolean(REQUIRE_API_KEY);
   let apiKey = "";
@@ -967,9 +714,7 @@ async function fetchFormItems(payload, originTabId) {
   const proof = await gatherSystemSignals({ nonce: "api_request" }).catch(() => null);
   const analysisId =
     (globalThis.crypto?.randomUUID && crypto.randomUUID()) || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const combinedHtml = usesFrameBundle ? frameEntries.map((entry) => entry.html).join("\n<!--frame-->") : html;
-  const htmlSha256 = await sha256Hex(combinedHtml).catch(() => null);
-  const htmlPreview = createHtmlPreview(combinedHtml);
+  const htmlSha256 = await sha256Hex(html).catch(() => null);
   const planHint = EDITION === "paid" ? "paid" : "free";
 
   const startedAt = nowMs();
@@ -978,19 +723,10 @@ async function fetchFormItems(payload, originTabId) {
     send_record: sendRecord,
     page_url: pageUrl || undefined,
     user_info: proof || {},
-    plan_hint: planHint
+    plan_hint: planHint,
+    html,
+    html_sha256: htmlSha256 || undefined
   };
-  if (usesFrameBundle) {
-    requestPayload.frames = frameEntries.map((entry) => ({
-      frame_id: entry.frameId,
-      frame_url: entry.url || null,
-      html: entry.html
-    }));
-    requestPayload.html_sha256 = htmlSha256 || undefined;
-  } else {
-    requestPayload.html = html;
-    requestPayload.html_sha256 = htmlSha256 || undefined;
-  }
 
   const getDeviceToken = async (forceRefresh = false) => {
     if (!deviceAuthAPI?.getOrRefreshDeviceToken) {
@@ -1074,29 +810,7 @@ async function fetchFormItems(payload, originTabId) {
   if (parseError) {
     throw new Error("APIレスポンスの解析に失敗しました");
   }
-  let frameItems = Array.isArray(data?.frame_items)
-    ? data.frame_items
-    : Array.isArray(data?.frames)
-      ? data.frames
-      : null;
-  if (usesFrameBundle && (!frameItems || !frameItems.length)) {
-    const fallbackFrameItems = Array.isArray(data?.form_items) ? data.form_items : Array.isArray(data) ? data : [];
-    if (fallbackFrameItems.length) {
-      frameItems = [
-        {
-          frame_id: frameEntries[0]?.frameId ?? 0,
-          items: fallbackFrameItems
-        }
-      ];
-    }
-  }
-  const items = usesFrameBundle
-    ? []
-    : Array.isArray(data?.form_items)
-      ? data.form_items
-      : Array.isArray(data)
-        ? data
-        : [];
+  const items = Array.isArray(data?.form_items) ? data.form_items : Array.isArray(data) ? data : [];
   const planStatus = extractPlanStatusFromPayload(data);
 
   const htmlLogId = typeof data?.html_log_id === "string" && data.html_log_id.trim() ? data.html_log_id.trim() : null;
@@ -1106,7 +820,7 @@ async function fetchFormItems(payload, originTabId) {
       analysisId,
       pageUrl: pageUrl || undefined,
       htmlSha256,
-      htmlLength: combinedHtml?.length || 0,
+      htmlLength: html?.length || 0,
       requestedAt: Date.now(),
       htmlLogId
     });
@@ -1154,7 +868,7 @@ async function fetchFormItems(payload, originTabId) {
     return "priority";
   })();
 
-  return { items, frameItems, durationMs, throttleMode, quota: serverQuota, planStatus };
+  return { items, durationMs, throttleMode, quota: serverQuota, planStatus };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -1210,6 +924,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "autoform_fetch_form_items") {
+    const originTabId = sender?.tab?.id;
+    fetchFormItems(message.payload, originTabId)
+      .then((result) =>
+        sendResponse({
+          items: result.items,
+          durationMs: result.durationMs,
+          throttleMode: result.throttleMode,
+          quota: result.quota,
+          planStatus: result.planStatus || null
+        })
+      )
+      .catch((err) =>
+        sendResponse({
+          error: err?.message || "APIエラー",
+          quota: err?.quota || null,
+          code: err?.code || null,
+          planStatus: err?.planStatus || null
+        })
+      );
+    return true;
+  }
+
   if (message.type === "autoform_open_unlimited_cta") {
     const targetUrl =
       (typeof message?.url === "string" && message.url.trim()) || AIMSALES_SIGNUP_URL;
@@ -1260,36 +997,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "autoform_manual_fill_all_frames") {
-    (async () => {
-      try {
-        const tabId = await resolveManualFillTabId(sender, message);
-        if (typeof tabId !== "number") {
-          sendResponse({ error: "tab_unavailable" });
-          return;
-        }
-        const result = await runManualFillAcrossFrames(tabId, {
-          sendRecord: message?.payload?.sendRecord,
-          pageUrl: message?.payload?.pageUrl,
-          source: message?.payload?.source
-        });
-        sendResponse({
-          ok: true,
-          summary: result.summary,
-          quota: result.quota || null,
-          planStatus: result.planStatus || null,
-          durationMs: result.durationMs || null,
-          throttleMode: result.throttleMode || null
-        });
-      } catch (error) {
-        sendResponse({
-          error: error?.message || "manual_fill_failed",
-          quota: error?.quota || null
-        });
-      }
-    })();
-    return true;
-  }
 });
 
 if (chrome?.webNavigation?.onCommitted) {

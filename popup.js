@@ -1483,23 +1483,6 @@
     });
   }
 
-  function getActiveTabUrl() {
-    return new Promise((resolve) => {
-      if (!chrome?.tabs?.query) {
-        resolve(null);
-        return;
-      }
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (chrome.runtime.lastError) {
-          resolve(null);
-          return;
-        }
-        const tab = tabs && tabs[0];
-        resolve(tab?.url || null);
-      });
-    });
-  }
-
   function getAllFrameIds(tabId) {
     return new Promise((resolve, reject) => {
       if (!chrome?.webNavigation?.getAllFrames) {
@@ -1692,37 +1675,17 @@
     setManualStatus("");
     let resolvedQuota = null;
     try {
+      const tabId = await getActiveTabId();
       const granted = await ensureAllUrlsPermission();
       if (!granted) {
         setManualStatus("全サイト権限がないため入力できませんでした", true);
         return;
       }
       await enableAlwaysOnInjection();
-      const sendRecord =
-        currentSendContent && typeof currentSendContent === "object"
-          ? { ...DEFAULT_SEND_CONTENT, ...currentSendContent }
-          : DEFAULT_SEND_CONTENT;
-      const pageUrl = await getActiveTabUrl();
-      const response = await new Promise((resolve) => {
-        try {
-          chrome.runtime.sendMessage(
-              {
-                type: "autoform_manual_fill_all_frames",
-                payload: { sendRecord, pageUrl, source: "popup-manual" }
-              },
-            (result) => {
-              if (chrome.runtime?.lastError) {
-                resolve({ error: chrome.runtime.lastError.message });
-                return;
-              }
-              resolve(result || {});
-            }
-          );
-        } catch (err) {
-          resolve({ error: err?.message || "manual_fill_failed" });
-        }
-      });
-      if (response?.error) {
+      await injectContentScriptIntoTab(tabId);
+      await ensureInjectedToFrames(tabId, [0]);
+      const response = await sendCommandToFrame(tabId, 0, "autoform_manual_fill");
+      if (response?.error && !response?.unreachable) {
         resolvedQuota = response?.quota && typeof response.quota === "object" ? response.quota : null;
         handleManualFillErrorState({
           code: response?.code || null,
@@ -1731,15 +1694,14 @@
         });
         return;
       }
-      resolvedQuota = response?.quota && typeof response.quota === "object" ? response.quota : null;
-      const summary = response?.summary;
-      if (!summary || typeof summary.success !== "number") {
+      const applied = response?.applied;
+      const filled = typeof response?.filled === "number" ? response.filled : applied?.success;
+      if (!applied && typeof filled !== "number") {
         setManualStatus("入力結果が取得できませんでした", true);
         return;
       }
-      if (summary.total === 0) {
-        setManualStatus("入力可能なフレームが見つかりませんでした", true);
-        return;
+      if (!resolvedQuota && response?.quota && typeof response.quota === "object") {
+        resolvedQuota = response.quota;
       }
       setManualStatus("");
       flashPrimaryButtonSuccess(btn);
