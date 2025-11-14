@@ -513,6 +513,59 @@ function sendCommandToFrame(tabId, frameId, message) {
   });
 }
 
+function isExtensionPageUrl(url) {
+  return typeof url === "string" && url.startsWith("chrome-extension://");
+}
+
+function queryFirstActiveTab(options) {
+  return new Promise((resolve) => {
+    if (!chrome?.tabs?.query) {
+      resolve(null);
+      return;
+    }
+    try {
+      chrome.tabs.query(options, (tabs) => {
+        if (chrome.runtime?.lastError) {
+          resolve(null);
+          return;
+        }
+        const list = Array.isArray(tabs) ? tabs : [];
+        const preferred = list.find((tab) => typeof tab?.id === "number" && !isExtensionPageUrl(tab?.url));
+        const fallback = preferred || list.find((tab) => typeof tab?.id === "number") || null;
+        resolve(fallback || null);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+async function resolveManualFillTabId(sender, message) {
+  const tabIdFromSender = typeof sender?.tab?.id === "number" ? sender.tab.id : null;
+  if (typeof tabIdFromSender === "number") {
+    return tabIdFromSender;
+  }
+  const tabIdFromPayload = typeof message?.payload?.tabId === "number" ? message.payload.tabId : null;
+  if (typeof tabIdFromPayload === "number") {
+    return tabIdFromPayload;
+  }
+  if (!chrome?.tabs?.query) {
+    return null;
+  }
+  const attempts = [
+    { active: true, lastFocusedWindow: true },
+    { active: true, currentWindow: true },
+    { active: true }
+  ];
+  for (const options of attempts) {
+    const tab = await queryFirstActiveTab(options);
+    if (tab && typeof tab.id === "number") {
+      return tab.id;
+    }
+  }
+  return null;
+}
+
 async function runManualFillAcrossFrames(tabId, options = {}) {
   const hasAll = await hasAllUrlsPermission();
   if (!hasAll) {
@@ -628,7 +681,13 @@ async function runManualFillAcrossFrames(tabId, options = {}) {
     timestamp: Date.now()
   });
 
-  return { summary, quota, planStatus: fetchResult?.planStatus || null };
+  return {
+    summary,
+    quota,
+    planStatus: fetchResult?.planStatus || null,
+    durationMs: fetchResult?.durationMs || null,
+    throttleMode: fetchResult?.throttleMode || null
+  };
 }
 
 async function requestInputCountForTab(tabId) {
@@ -1151,29 +1210,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "autoform_fetch_form_items") {
-    const originTabId = sender?.tab?.id;
-    fetchFormItems(message.payload, originTabId)
-      .then((result) =>
-        sendResponse({
-          items: result.items,
-          durationMs: result.durationMs,
-          throttleMode: result.throttleMode,
-          quota: result.quota,
-          planStatus: result.planStatus || null
-        })
-      )
-      .catch((err) =>
-        sendResponse({
-          error: err?.message || "APIエラー",
-          quota: err?.quota || null,
-          code: err?.code || null,
-          planStatus: err?.planStatus || null
-        })
-      );
-    return true;
-  }
-
   if (message.type === "autoform_open_unlimited_cta") {
     const targetUrl =
       (typeof message?.url === "string" && message.url.trim()) || AIMSALES_SIGNUP_URL;
@@ -1225,28 +1261,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "autoform_manual_fill_all_frames") {
-    const tabIdFromSender = typeof sender?.tab?.id === "number" ? sender.tab.id : null;
-    const tabIdFromPayload = typeof message?.payload?.tabId === "number" ? message.payload.tabId : null;
-    const tabId = tabIdFromSender ?? tabIdFromPayload;
-    if (typeof tabId !== "number") {
-      sendResponse({ error: "tab_unavailable" });
-      return;
-    }
-    runManualFillAcrossFrames(tabId, { sendRecord: message?.payload?.sendRecord, pageUrl: message?.payload?.pageUrl, source: message?.payload?.source })
-      .then((result) =>
+    (async () => {
+      try {
+        const tabId = await resolveManualFillTabId(sender, message);
+        if (typeof tabId !== "number") {
+          sendResponse({ error: "tab_unavailable" });
+          return;
+        }
+        const result = await runManualFillAcrossFrames(tabId, {
+          sendRecord: message?.payload?.sendRecord,
+          pageUrl: message?.payload?.pageUrl,
+          source: message?.payload?.source
+        });
         sendResponse({
           ok: true,
           summary: result.summary,
           quota: result.quota || null,
-          planStatus: result.planStatus || null
-        })
-      )
-      .catch((error) =>
+          planStatus: result.planStatus || null,
+          durationMs: result.durationMs || null,
+          throttleMode: result.throttleMode || null
+        });
+      } catch (error) {
         sendResponse({
           error: error?.message || "manual_fill_failed",
           quota: error?.quota || null
-        })
-      );
+        });
+      }
+    })();
     return true;
   }
 });

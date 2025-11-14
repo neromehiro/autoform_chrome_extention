@@ -17,6 +17,12 @@
       chrome.storage.local.set(obj, () => resolve());
     });
 
+  const removeLocal = (key) =>
+    new Promise((resolve) => {
+      if (!chrome?.storage?.local) return resolve();
+      chrome.storage.local.remove(key, () => resolve());
+    });
+
   function getUserAgent() {
     if (typeof navigator !== "undefined" && typeof navigator.userAgent === "string") {
       return navigator.userAgent;
@@ -102,6 +108,20 @@
     };
   }
 
+  async function requestDeviceToken(endpoint, userInfo, { omitUserInfo = false } = {}) {
+    const headers = { accept: "application/json" };
+    let body;
+    if (!omitUserInfo) {
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify({ user_info: userInfo });
+    }
+    return fetch(endpoint, {
+      method: "POST",
+      headers,
+      body
+    });
+  }
+
   async function getOrRefreshDeviceToken(gatherSignals, overrideEndpoint) {
     const gatherFn = typeof gatherSignals === "function" ? gatherSignals : collectSignals;
     let userInfo = {};
@@ -126,18 +146,27 @@
 
     const endpoint = overrideEndpoint || DEVICE_TOKEN_ENDPOINT;
     let response;
-    try {
-      response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", accept: "application/json" },
-        body: JSON.stringify({ user_info: userInfo })
-      });
-    } catch (err) {
-      console.warn("[DeviceAuth] device token request failed", err);
-      return token || null;
+    let fallbackAttempted = false;
+    const attemptRequest = async (omitUserInfo = false) => {
+      try {
+        return await requestDeviceToken(endpoint, userInfo, { omitUserInfo });
+      } catch (err) {
+        console.warn("[DeviceAuth] device token request failed", err);
+        return null;
+      }
+    };
+
+    response = await attemptRequest(false);
+    if (!response?.ok && response?.status === 429) {
+      fallbackAttempted = true;
+      response = await attemptRequest(true);
     }
-    if (!response.ok) {
-      console.warn("[DeviceAuth] device token request rejected", response.status);
+    if (!response?.ok) {
+      console.warn(
+        "[DeviceAuth] device token request rejected",
+        response ? response.status : "network_error",
+        fallbackAttempted ? "(fallback attempted)" : ""
+      );
       return token || null;
     }
     const data = await response.json().catch(() => ({}));
@@ -156,8 +185,22 @@
     return null;
   }
 
+  async function clearDeviceTokenCache() {
+    try {
+      await removeLocal(DEVICE_TOKEN_KEY);
+    } catch (_) {
+      // ignore storage failures
+    }
+  }
+
+  async function forceRefreshDeviceToken(gatherSignals, overrideEndpoint) {
+    await clearDeviceTokenCache();
+    return getOrRefreshDeviceToken(gatherSignals, overrideEndpoint);
+  }
+
   self.DeviceAuth = {
     getOrRefreshDeviceToken,
+    forceRefreshDeviceToken,
     collectSignals
   };
 })();

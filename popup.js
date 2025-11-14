@@ -1692,7 +1692,6 @@
     setManualStatus("");
     let resolvedQuota = null;
     try {
-      const tabId = await getActiveTabId();
       const granted = await ensureAllUrlsPermission();
       if (!granted) {
         setManualStatus("全サイト権限がないため入力できませんでした", true);
@@ -1709,7 +1708,7 @@
           chrome.runtime.sendMessage(
               {
                 type: "autoform_manual_fill_all_frames",
-                payload: { sendRecord, pageUrl, source: "popup-manual", tabId }
+                payload: { sendRecord, pageUrl, source: "popup-manual" }
               },
             (result) => {
               if (chrome.runtime?.lastError) {

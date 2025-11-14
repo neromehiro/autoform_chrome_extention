@@ -1089,19 +1089,11 @@
     };
     try {
       let result = null;
-      let multiFrameResult = null;
       try {
-        multiFrameResult = await requestManualFillAcrossFrames();
-      } catch (err) {
-        console.warn("[AutoForm] cross-frame fill request failed", err);
-      }
-      if (multiFrameResult?.ok) {
-        result = multiFrameResult;
-      } else {
-        if (multiFrameResult?.error) {
-          console.warn("[AutoForm] cross-frame fill rejected", multiFrameResult.error);
-        }
         result = await performRemoteFill("floating_button");
+      } catch (err) {
+        console.warn("[AutoForm] floating button fill failed", err);
+        result = { error: err?.message || "manual_fill_failed", quota: err?.quota || null };
       }
       if (result?.quota) {
         applyQuotaStateToFloatingButton(result.quota);
@@ -1207,35 +1199,44 @@
         });
         return { applied: { total: 0, success: 0, skipped: 0 }, skipped: true };
       }
-      const html = getPageHtml();
-      if (!html) {
-        return { error: "HTMLが取得できませんでした" };
-      }
       try {
-        const sendRecord = await getSendRecordFromStorage();
-        const pageUrl = (() => {
-          try {
-            return window.location?.href || null;
-          } catch (_) {
-            return null;
+        const result = await requestManualFillAcrossFrames(context || null);
+        if (result?.ok !== true) {
+          const err = new Error(result?.error || "入力に失敗しました");
+          if (result?.quota && typeof result.quota === "object") {
+            err.quota = result.quota;
           }
-        })();
-        const { items, durationMs, throttleMode, quota, planStatus } = await requestFormItemsViaBackground(html, sendRecord, pageUrl);
-        lastThrottleMode = throttleMode || lastThrottleMode;
-        const applied = applyJsonInstructions(items);
+          if (result?.code) {
+            err.code = result.code;
+          }
+          if (result?.planStatus) {
+            err.planStatus = result.planStatus;
+          }
+          throw err;
+        }
+        const summary = result?.summary || {};
+        const applied = {
+          success: summary.success || 0,
+          skipped: summary.skipped || 0,
+          total: summary.total || 0
+        };
+        const quota = result?.quota || null;
+        const planStatus = result?.planStatus || null;
+        const durationMs = typeof result?.durationMs === "number" ? result.durationMs : null;
+        lastThrottleMode = result?.throttleMode || lastThrottleMode;
         if (applied.success > 0) {
-          const durationSeconds = typeof durationMs === "number" ? durationMs / 1000 : null;
+          const durationSeconds = durationMs != null ? durationMs / 1000 : null;
           showCompletionNotice(durationSeconds, lastThrottleMode);
         }
         applyQuotaStateToFloatingButton(quota);
         if (isTopFrame) {
           reportFillResultToBackground({
             ok: true,
-            applied: applied?.success || 0,
-            total: typeof applied?.total === "number" ? applied.total : Array.isArray(items) ? items.length : null,
-            quota: quota || null,
-            planStatus: planStatus || null,
-            durationMs: typeof durationMs === "number" ? durationMs : null,
+            applied: applied.success,
+            total: applied.total,
+            quota,
+            planStatus,
+            durationMs,
             source: context || null
           });
         }
@@ -1270,49 +1271,6 @@
     return result;
   }
 
-  function requestFormItemsViaBackground(html, sendRecord, pageUrl) {
-    return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage(
-        {
-          type: "autoform_fetch_form_items",
-          payload: { html, sendRecord, pageUrl }
-        },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-          if (response?.error) {
-            const err = new Error(response.error);
-            if (response?.quota && typeof response.quota === "object") {
-              err.quota = response.quota;
-            }
-            if (response?.code) {
-              err.code = response.code;
-            }
-            if (response?.planStatus) {
-              err.planStatus = response.planStatus;
-            }
-            reject(err);
-            return;
-          }
-          const items = response?.items;
-          if (!Array.isArray(items)) {
-            reject(new Error("APIレスポンスが配列形式ではありません"));
-            return;
-          }
-          resolve({
-            items,
-            durationMs: response?.durationMs,
-            throttleMode: response?.throttleMode,
-            quota: response?.quota || null,
-            planStatus: response?.planStatus || null
-          });
-        }
-      );
-    });
-  }
-
   function refreshEditionStateFromBackground() {
     if (!chrome?.runtime?.sendMessage) {
       return Promise.resolve();
@@ -1339,7 +1297,7 @@
     });
   }
 
-  function requestManualFillAcrossFrames() {
+  function requestManualFillAcrossFrames(source = null) {
     if (!chrome?.runtime?.sendMessage) {
       return Promise.resolve({ error: "runtime_unavailable" });
     }
@@ -1358,7 +1316,7 @@
             chrome.runtime.sendMessage(
               {
                 type: "autoform_manual_fill_all_frames",
-                payload: { sendRecord, pageUrl, source: "manual-fill" }
+                payload: { sendRecord, pageUrl, source: source || "manual-fill" }
               },
               (response) => {
                 if (chrome.runtime.lastError) {

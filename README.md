@@ -39,7 +39,7 @@ Aimsales AutoForm は、そうしたフォーム入力を自動化し、ワン�
 
 ---
 
-## 開発・提供
+## 開発・提供 
 
 **Aimsales株式会社**  
 [https://aimsales.jp](https://aimsales.jp)  

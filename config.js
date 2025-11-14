@@ -4,6 +4,7 @@
   const CACHE_STORAGE_KEY = "aimsalesRuntimeConfigCache";
   const MEMORY_CACHE = new Map();
   const API_KEY_STORAGE_KEY = "aimsalesApiKey";
+  const LOCAL_SETTINGS_PATH = "setting.json";
   const FALLBACK_CONFIG = {
     edition: "free",
     rules: {
@@ -22,6 +23,9 @@
         ads: {
           cards: []
         }
+      },
+      priorityCard: {
+        showWhenRemainingAtMost: null
       }
     },
     quota: null,
@@ -31,6 +35,106 @@
   const clampInt = (value) => Math.max(0, Math.floor(Number(value) || 0));
 
   const clone = (input) => JSON.parse(JSON.stringify(input || {}));
+
+  const normalizeEditionValue = (value) => {
+    if (typeof value !== "string") return null;
+    const normalized = value.trim().toLowerCase();
+    return normalized === "free" || normalized === "paid" ? normalized : null;
+  };
+
+  let localSettingsPromise = null;
+
+  const resolveLocalSettingsUrl = () => {
+    try {
+      if (typeof chrome?.runtime?.getURL === "function") {
+        return chrome.runtime.getURL(LOCAL_SETTINGS_PATH);
+      }
+    } catch (_) {
+      // ignore
+    }
+    return LOCAL_SETTINGS_PATH;
+  };
+
+  const fetchLocalSettings = () => {
+    if (localSettingsPromise) {
+      return localSettingsPromise;
+    }
+    if (typeof fetch !== "function") {
+      localSettingsPromise = Promise.resolve(null);
+      return localSettingsPromise;
+    }
+    const url = resolveLocalSettingsUrl();
+    localSettingsPromise = fetch(url, { cache: "no-cache" })
+      .then((res) => (res.ok ? res.json() : null))
+      .catch(() => null);
+    return localSettingsPromise;
+  };
+
+  const getLocalEditionOverride = () =>
+    fetchLocalSettings()
+      .then((data) => {
+        if (!data) return null;
+        if (typeof data === "string") {
+          return normalizeEditionValue(data);
+        }
+        if (typeof data?.edition === "string") {
+          return normalizeEditionValue(data.edition);
+        }
+        if (typeof data?.mode === "string") {
+          return normalizeEditionValue(data.mode);
+        }
+        return null;
+      })
+      .catch(() => null);
+
+  const getLocalApiKeyOverride = () =>
+    fetchLocalSettings()
+      .then((data) => {
+        if (!data) return null;
+        const candidates = [data.apiKey, data.api_key, data.apikey];
+        for (const candidate of candidates) {
+          if (typeof candidate === "string" && candidate.trim()) {
+            return candidate.trim();
+          }
+        }
+        return null;
+      })
+      .catch(() => null);
+
+  getLocalEditionOverride()
+    .then((override) => {
+      if (override) {
+        FALLBACK_CONFIG.edition = override;
+      }
+    })
+    .catch(() => {});
+
+  const applyLocalEditionOverride = async (config) => {
+    if (!config || typeof config !== "object") {
+      return config;
+    }
+    try {
+      const override = await getLocalEditionOverride();
+      if (override) {
+        config.edition = override;
+      }
+    } catch (_) {
+      // ignore local override failures
+    }
+    return config;
+  };
+
+  const getPlanWithLocalOverride = async (plan) => {
+    try {
+      const override = await getLocalEditionOverride();
+      if (override) {
+        return override;
+      }
+    } catch (_) {
+      // ignore and fall back to provided plan
+    }
+    return normalizeEditionValue(plan) || "free";
+  };
 
   const deepMerge = (base, override) => {
     if (!override || typeof override !== "object") return clone(base);
@@ -102,8 +206,20 @@
     }
     merged.rules.priority = priority;
     merged.endpoints = merged.endpoints || FALLBACK_CONFIG.endpoints;
-    if (!merged.ui) merged.ui = { popup: { ...FALLBACK_CONFIG.ui.popup } };
+    const normalizeOptionalThreshold = (value) => {
+      if (value == null) return null;
+      if (typeof value === "string" && !value.trim()) return null;
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric < 0) return null;
+      return clampInt(numeric);
+    };
+    if (!merged.ui) merged.ui = { popup: { ...FALLBACK_CONFIG.ui.popup }, priorityCard: { ...FALLBACK_CONFIG.ui.priorityCard } };
     if (!merged.ui.popup) merged.ui.popup = { ...FALLBACK_CONFIG.ui.popup };
+    if (!merged.ui.priorityCard) {
+      merged.ui.priorityCard = { ...FALLBACK_CONFIG.ui.priorityCard };
+    } else {
+      merged.ui.priorityCard = { ...FALLBACK_CONFIG.ui.priorityCard, ...merged.ui.priorityCard };
+    }
     if (!merged.ui.popup.ads) merged.ui.popup.ads = { cards: [] };
     const block3Text =
       typeof raw?.block3_text === "string" ? raw.block3_text : merged.promoBlockText || merged.ui.popup.block3Text;
@@ -131,6 +247,34 @@
       normalizedAds = normalizeAdCards(merged.ui.popup.ads.cards);
     }
     merged.ui.popup.ads.cards = normalizedAds;
+    const priorityCardSources = [
+      raw?.ui?.priorityCard,
+      raw?.ui?.priority_card,
+      raw?.priority_card,
+      raw
+    ].filter(Boolean);
+    for (const source of priorityCardSources) {
+      const thresholdCandidates = [
+        source.showWhenRemainingAtMost,
+        source.show_when_remaining_at_most,
+        source.showThreshold,
+        source.show_threshold,
+        source.maxRemainingToShow,
+        source.max_remaining_to_show,
+        source.priorityCardShowThreshold,
+        source.priority_card_show_threshold
+      ];
+      for (const candidate of thresholdCandidates) {
+        const normalized = normalizeOptionalThreshold(candidate);
+        if (normalized != null) {
+          merged.ui.priorityCard.showWhenRemainingAtMost = normalized;
+          break;
+        }
+      }
+      if (merged.ui.priorityCard.showWhenRemainingAtMost != null) {
+        break;
+      }
+    }
     merged.quota = merged.quota || null;
     return merged;
   };
@@ -177,15 +321,36 @@
 
   const getStoredApiKey = async () => {
     const stored = await readSyncStorage(API_KEY_STORAGE_KEY);
-    return typeof stored === "string" ? stored : "";
+    if (typeof stored === "string" && stored.trim()) {
+      return stored.trim();
+    }
+    try {
+      const override = await getLocalApiKeyOverride();
+      if (override) {
+        return override;
+      }
+    } catch (_) {
+      // ignore local override failures
+    }
+    return "";
   };
 
-  const ensureDeviceToken = async (base) => {
+  const shouldAttachApiKeyForConfig = (plan) => {
+    const normalized = normalizeEditionValue(plan);
+    return normalized === "paid";
+  };
+
+  const ensureDeviceToken = async (base, options = {}) => {
     if (!DeviceAuth?.getOrRefreshDeviceToken) return null;
     const endpoint = `${base}/device_token`;
     const gather = typeof DeviceAuth?.collectSignals === "function" ? DeviceAuth.collectSignals : undefined;
+    const forceRefresh = Boolean(options?.forceRefresh);
     try {
-      return await DeviceAuth.getOrRefreshDeviceToken(gather, endpoint);
+      const refreshFn =
+        forceRefresh && typeof DeviceAuth?.forceRefreshDeviceToken === "function"
+          ? DeviceAuth.forceRefreshDeviceToken
+          : DeviceAuth.getOrRefreshDeviceToken;
+      return await refreshFn(gather, endpoint);
     } catch (err) {
       console.warn("[RuntimeConfig] device token refresh failed", err);
       return null;
@@ -195,65 +360,118 @@
   const fetchRuntimeConfig = async (base, plan, authContext = {}) => {
     const normalizedBase = `${base || DEFAULT_SERVER_BASE}`.replace(/\/+$/, "");
     const url = new URL(`${normalizedBase}/config`);
-    if (plan) url.searchParams.set("plan", plan);
+    const normalizedPlanParam = normalizeEditionValue(plan) || (typeof plan === "string" ? plan.trim() : "");
+    if (normalizedPlanParam) {
+      url.searchParams.set("plan", normalizedPlanParam);
+      url.searchParams.set("plan_hint", normalizedPlanParam);
+    }
     const headers = { accept: "application/json" };
     const deviceToken = authContext.deviceToken || null;
-    const apiKey = authContext.apiKey || null;
+    const apiKey = authContext.apiKey || "";
     if (deviceToken) {
       headers.Authorization = `Bearer ${deviceToken}`;
     }
-    if (apiKey) {
+    if (shouldAttachApiKeyForConfig(normalizedPlanParam) && apiKey) {
       headers["X-API-Key"] = apiKey;
     }
     const response = await fetch(url.toString(), { headers });
     if (!response.ok) {
-      throw new Error(`Config fetch failed (${response.status})`);
+      const errorBody = await response.text().catch(() => "");
+      const message = errorBody?.trim()
+        ? errorBody
+        : `Config fetch failed (${response.status})`;
+      const error = new Error(message);
+      error.status = response.status;
+      error.bodyText = errorBody;
+      throw error;
     }
     return response.json();
   };
 
   const memoryEntryIsValid = (entry) => entry && entry.expiresAt && entry.expiresAt > Date.now();
 
+  const isUnauthorizedError = (error) => {
+    if (!error) return false;
+    if (typeof error.status === "number" && error.status === 401) {
+      return true;
+    }
+    const merged = [error.message, error.bodyText].filter(Boolean).join(" ").toLowerCase();
+    return merged.includes("unauthorized");
+  };
+
   async function loadRuntimeConfig(options = {}) {
-    const serverBase = options.serverBase || DEFAULT_SERVER_BASE;
-    const plan = options.plan || FALLBACK_CONFIG.edition || "free";
+    const {
+      serverBase = DEFAULT_SERVER_BASE,
+      plan = FALLBACK_CONFIG.edition || "free",
+      forceReload = false,
+      retryUnauthorized = true
+    } = options;
     const normalizedBase = `${serverBase}`.replace(/\/+$/, "");
-    const cacheId = makeCacheId(normalizedBase, plan);
+    const normalizedPlan = await getPlanWithLocalOverride(plan);
+    const cacheId = makeCacheId(normalizedBase, normalizedPlan);
     const now = Date.now();
     const authContext = {};
-    try {
-      authContext.deviceToken = await ensureDeviceToken(normalizedBase);
-    } catch (_) {
-      authContext.deviceToken = null;
-    }
-    try {
-      authContext.apiKey = await getStoredApiKey();
-    } catch (_) {
+
+    const setDeviceToken = async (force = false) => {
+      try {
+        authContext.deviceToken = await ensureDeviceToken(normalizedBase, { forceRefresh: force });
+      } catch (_) {
+        authContext.deviceToken = null;
+      }
+      return authContext.deviceToken;
+    };
+
+    await setDeviceToken(false);
+    if (shouldAttachApiKeyForConfig(normalizedPlan)) {
+      try {
+        authContext.apiKey = await getStoredApiKey();
+      } catch (_) {
+        authContext.apiKey = "";
+      }
+    } else {
       authContext.apiKey = "";
     }
 
     const memoryEntry = MEMORY_CACHE.get(cacheId);
-    if (memoryEntryIsValid(memoryEntry)) {
-      return memoryEntry.config;
+    if (!forceReload && memoryEntryIsValid(memoryEntry)) {
+      return applyLocalEditionOverride(memoryEntry.config);
     }
 
     const storedEntry = await loadFromStorage(cacheId);
-    if (memoryEntryIsValid(storedEntry)) {
+    if (!forceReload && memoryEntryIsValid(storedEntry)) {
       MEMORY_CACHE.set(cacheId, storedEntry);
-      return storedEntry.config;
+      return applyLocalEditionOverride(storedEntry.config);
     }
+
+    const fetchWithRetry = async () => {
+      let attempts = 0;
+      const maxAttempts = retryUnauthorized ? 2 : 1;
+      let lastError = null;
+      while (attempts < maxAttempts) {
+        try {
+          return await fetchRuntimeConfig(normalizedBase, normalizedPlan, authContext);
+        } catch (error) {
+          lastError = error;
+          const shouldRetry = retryUnauthorized && isUnauthorizedError(error) && attempts === 0;
+          if (!shouldRetry) {
+            break;
+          }
+          await setDeviceToken(true);
+          attempts += 1;
+        }
+      }
+      throw lastError;
+    };
 
     let fetched;
     try {
-      if (!authContext.deviceToken) {
-        authContext.deviceToken = await ensureDeviceToken(normalizedBase);
-      }
-      fetched = await fetchRuntimeConfig(normalizedBase, plan, authContext);
-    } catch (_) {
+      fetched = await fetchWithRetry();
+    } catch (error) {
       if (storedEntry?.config) {
-        return storedEntry.config;
+        return applyLocalEditionOverride(storedEntry.config);
       }
       const fallbackConfig = normalizeConfig();
+      await applyLocalEditionOverride(fallbackConfig);
       const fallbackEntry = { config: fallbackConfig, expiresAt: now + 60 * 1000 };
       MEMORY_CACHE.set(cacheId, fallbackEntry);
       return fallbackConfig;
@@ -262,6 +480,7 @@
     const normalized = normalizeConfig(fetched);
     const ttlSec = clampInt(fetched?.cache_ttl_sec);
     const ttlMs = ttlSec > 0 ? ttlSec * 1000 : 5 * 60 * 1000;
+    await applyLocalEditionOverride(normalized);
     const entry = { config: normalized, expiresAt: now + ttlMs };
     MEMORY_CACHE.set(cacheId, entry);
     await saveToStorage(cacheId, entry);
@@ -271,7 +490,8 @@
   async function getCachedConfig(options = {}) {
     const serverBase = options.serverBase || DEFAULT_SERVER_BASE;
     const plan = options.plan || FALLBACK_CONFIG.edition || "free";
-    const cacheId = makeCacheId(serverBase, plan);
+    const normalizedPlan = await getPlanWithLocalOverride(plan);
+    const cacheId = makeCacheId(serverBase, normalizedPlan);
     const memoryEntry = MEMORY_CACHE.get(cacheId);
     if (memoryEntryIsValid(memoryEntry)) {
       return memoryEntry.config;
@@ -296,6 +516,8 @@
     getCachedConfig,
     clearRuntimeCache,
     DEFAULTS: FALLBACK_CONFIG,
-    DEFAULT_SERVER_BASE
+    DEFAULT_SERVER_BASE,
+    getLocalEditionOverride,
+    getLocalApiKeyOverride
   };
 })();

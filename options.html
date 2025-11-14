@@ -82,6 +82,67 @@
         font-size: 14px;
         color: #64748b;
       }
+      .api-key-form {
+        margin-top: 28px;
+        padding-top: 20px;
+        border-top: 1px solid rgba(15, 23, 42, 0.08);
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .api-key-form label {
+        font-size: 14px;
+        font-weight: 700;
+        margin-bottom: 6px;
+        display: block;
+      }
+      .api-key-form input {
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid #cbd5f5;
+        font-size: 14px;
+      }
+      .api-key-form input:focus {
+        outline: none;
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+      }
+      .api-key-actions {
+        display: flex;
+        gap: 12px;
+      }
+      .api-key-actions button {
+        flex: 1;
+        padding: 10px 14px;
+        border-radius: 10px;
+        border: none;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        color: #fff;
+        background: linear-gradient(135deg, #0ea5e9, #6366f1);
+        box-shadow: 0 10px 20px rgba(99, 102, 241, 0.25);
+      }
+      .api-key-actions button.secondary {
+        background: #fff;
+        border: 1px solid rgba(148, 163, 184, 0.8);
+        color: #0f172a;
+        box-shadow: none;
+      }
+      .api-key-actions button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        box-shadow: none;
+      }
+      .api-key-helper {
+        margin: 0;
+        font-size: 12px;
+        color: #475569;
+      }
+      .api-key-helper a {
+        color: #2563eb;
+        text-decoration: underline;
+      }
     </style>
   </head>
   <body>
@@ -98,6 +159,21 @@
         </label>
       </div>
       <p class="helper-text">OFFにすると、Aimsales AutoForm はページに何も挿入しません。</p>
+      <div class="api-key-form">
+        <div>
+          <label for="options-api-key-input">APIキー (有料版)</label>
+          <p class="api-key-helper" style="margin-top:4px;">
+            Aimsalesから発行されたAPIキーを設定すると有料版として∞に利用できます。
+            <a href="https://forms.gle/FWkuxr8HenuLkARC7" target="_blank" rel="noreferrer noopener">APIキーを取得する</a>
+          </p>
+        </div>
+        <input type="text" id="options-api-key-input" placeholder="APIキーを入力" autocomplete="off" />
+        <div class="api-key-actions">
+          <button id="options-save-api-key" type="button">APIキーを保存</button>
+          <button id="options-delete-api-key" type="button" class="secondary">削除</button>
+        </div>
+        <p id="options-api-key-status" class="api-key-helper">APIキーが未設定です</p>
+      </div>
     </div>
     <script src="settings.js" defer></script>
   </body>
