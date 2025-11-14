@@ -13,6 +13,7 @@
   // テスト用の定数
   const STORAGE_KEY = "autoformEnabled";
   const AUTO_RUN_STORAGE_KEY = "autoformAutoRunOnOpen";
+  const API_KEY_STORAGE_KEY = "aimsalesApiKey";
   const skipTypes = new Set([
     "hidden", "file", "submit", "button", "reset", "radio", "checkbox",
     "range", "date", "time", "color", "image"
@@ -25,11 +26,14 @@
     "autoform_count_inputs",
     "autoform_count_forms",
     "autoform_apply_send_content",
-    "autoform_request_input_count"
+    "autoform_request_input_count",
+    "autoform_collect_frame_html"
   ]);
   const SEND_CONTENT_STORAGE_KEY = "autoformSendContent";
   const FLOATING_BUTTON_STORAGE_KEY = "autoformShowFloatingButton";
-  const FLOATING_BUTTON_LABEL_DEFAULT = "無制限に使うには";
+  const FLOATING_BUTTON_LABEL_DEFAULT = "自動入力を実行";
+  const FLOATING_BUTTON_LABEL_UPSELL = "無制限に使うには";
+  const FLOATING_BUTTON_LABEL_REQUIRE_API_KEY = "APIキーを設定してください";
   const AIMSALES_SIGNUP_URL = "https://forms.gle/FWkuxr8HenuLkARC7";
   const FLOATING_BUTTON_DEFAULT_BACKGROUND = "linear-gradient(135deg, #0ea5e9, #6366f1)";
   const FLOATING_BUTTON_DEFAULT_SHADOW = "0 16px 32px rgba(99, 102, 241, 0.35)";
@@ -76,6 +80,7 @@
   const FLOATING_PREVIEW_STYLE_ID = "autoform-floating-preview-style";
   const FLOATING_PREVIEW_HIDE_DELAY_MS = 120;
   const FLOATING_PREVIEW_VALUE_MAX_LENGTH = 60;
+  const SETTINGS_STORAGE_KEYS = [STORAGE_KEY, AUTO_RUN_STORAGE_KEY, FLOATING_BUTTON_STORAGE_KEY, API_KEY_STORAGE_KEY];
 
   const isTopFrame = window.top === window.self;
   let detectionNoticeShown = false;
@@ -92,6 +97,10 @@
   let floatingButtonCompletionInterval = null;
   let floatingButtonCompletionPending = false;
   let floatingButtonContainer = null;
+  let extensionEdition = "free";
+  let apiKeyAvailable = false;
+  let floatingButtonUpsellActive = false;
+  let floatingButtonBaseLabel = FLOATING_BUTTON_LABEL_DEFAULT;
   let floatingPreviewPanel = null;
   let floatingPreviewList = null;
   let floatingPreviewEmptyEl = null;
@@ -105,6 +114,40 @@
   let lastReportedInputCount = null;
   let inputCountReportTimer = null;
   let lastThrottleMode = null;
+  const isPaidEdition = () => extensionEdition === "paid";
+  const hasPaidAccess = () => isPaidEdition() && apiKeyAvailable;
+
+  function readStorageArea(area, keys) {
+    return new Promise((resolve) => {
+      if (!area?.get) {
+        resolve({});
+        return;
+      }
+      try {
+        area.get(keys, (result) => {
+          if (chrome.runtime?.lastError || !result) {
+            resolve({});
+            return;
+          }
+          resolve(result);
+        });
+      } catch (_) {
+        resolve({});
+      }
+    });
+  }
+
+  function loadSettingsSnapshot(keys) {
+    return Promise.all([readStorageArea(chrome?.storage?.sync, keys), readStorageArea(chrome?.storage?.local, keys)])
+      .then(([syncRes, localRes]) => {
+        const snapshot = { ...(syncRes || {}) };
+        Object.entries(localRes || {}).forEach(([key, value]) => {
+          snapshot[key] = value;
+        });
+        return snapshot;
+      })
+      .catch(() => ({}));
+  }
 
   function setNativeValue(el, v) {
     const proto = Object.getPrototypeOf(el);
@@ -299,6 +342,14 @@
     notice.style.bottom = "16px";
     (document.body || document.documentElement).appendChild(notice);
     setTimeout(() => notice.remove(), 2500);
+  }
+
+  function showErrorNotice(message) {
+    const text = message && typeof message === "string" ? message : "自動入力に失敗しました";
+    const notice = createNoticeElement(`⚠️ ${text}`, "rgba(248, 113, 113, 0.95)");
+    notice.style.bottom = "16px";
+    (document.body || document.documentElement).appendChild(notice);
+    setTimeout(() => notice.remove(), 3200);
   }
 
   function ensureFloatingPreviewStyles() {
@@ -868,7 +919,7 @@
 
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.textContent = FLOATING_BUTTON_LABEL_DEFAULT;
+    btn.textContent = getFloatingButtonBaseLabel();
     Object.assign(btn.style, {
       padding: "11px 18px",
       borderRadius: "999px 0 0 999px",
@@ -917,16 +968,157 @@
     }
   }
 
-  function handleFloatingButtonClick(event) {
-    event.preventDefault();
+  function getFloatingButtonBaseLabel() {
+    return floatingButtonBaseLabel || FLOATING_BUTTON_LABEL_DEFAULT;
+  }
+
+  function setFloatingButtonBaseLabel(label) {
+    const nextLabel = label || FLOATING_BUTTON_LABEL_DEFAULT;
+    floatingButtonBaseLabel = nextLabel;
+    if (floatingButton && !floatingButtonCompletionPending) {
+      floatingButton.textContent = nextLabel;
+    }
+  }
+
+  function refreshFloatingButtonBaseCopy() {
+    if (isPaidEdition() && !hasPaidAccess()) {
+      setFloatingButtonBaseLabel(FLOATING_BUTTON_LABEL_REQUIRE_API_KEY);
+      return;
+    }
+    setFloatingButtonBaseLabel(FLOATING_BUTTON_LABEL_DEFAULT);
+  }
+
+  function applyEditionStateFromApiKey(value) {
+    apiKeyAvailable = typeof value === "string" && value.trim().length > 0;
+    floatingButtonUpsellActive = false;
+    refreshFloatingButtonBaseCopy();
+  }
+
+  function quotaIndicatesDepleted(quota) {
+    if (!quota || typeof quota !== "object") return false;
+    if (quota.mode && String(quota.mode).toLowerCase() === "blocked") return true;
+    const remaining = quota.remaining;
+    if (remaining === Infinity || remaining === "Infinity") return false;
+    if (remaining == null) return false;
+    const numeric = Number(remaining);
+    return Number.isFinite(numeric) ? numeric <= 0 : false;
+  }
+
+  function reportFillResultToBackground(result) {
+    if (!result || typeof result !== "object" || !chrome?.runtime?.sendMessage) {
+      return;
+    }
+    try {
+      chrome.runtime.sendMessage(
+        { type: "autoform_record_fill_result", payload: result },
+        () => void chrome.runtime?.lastError
+      );
+    } catch (_) {
+      // ignore messaging failures
+    }
+  }
+
+  function applyQuotaStateToFloatingButton(quota) {
+    if (isPaidEdition()) {
+      floatingButtonUpsellActive = false;
+      setFloatingButtonBaseLabel(hasPaidAccess() ? FLOATING_BUTTON_LABEL_DEFAULT : FLOATING_BUTTON_LABEL_REQUIRE_API_KEY);
+      return;
+    }
+    const depleted = quotaIndicatesDepleted(quota);
+    floatingButtonUpsellActive = depleted;
+    setFloatingButtonBaseLabel(depleted ? FLOATING_BUTTON_LABEL_UPSELL : FLOATING_BUTTON_LABEL_DEFAULT);
+  }
+
+  function openUnlimitedCtaInNewTab() {
     const targetUrl = AIMSALES_SIGNUP_URL;
-    if (typeof window !== "undefined" && typeof window.open === "function") {
-      const opened = window.open(targetUrl, "_blank", "noopener,noreferrer");
-      if (opened) {
+    const fallbackToWindowOpen = () => {
+      if (typeof window !== "undefined" && typeof window.open === "function") {
+        try {
+          window.open(targetUrl, "_blank", "noopener,noreferrer");
+        } catch (err) {
+          console.warn("[AutoForm] window.open failed for CTA", err);
+        }
+      }
+    };
+    if (chrome?.runtime?.sendMessage) {
+      try {
+        chrome.runtime.sendMessage({ type: "autoform_open_unlimited_cta", url: targetUrl }, (response) => {
+          if (chrome.runtime?.lastError) {
+            console.warn("[AutoForm] failed to open unlimited CTA via background", chrome.runtime.lastError);
+            fallbackToWindowOpen();
+            return;
+          }
+          if (!response || response.ok !== true) {
+            if (response?.error) {
+              console.warn("[AutoForm] background rejected CTA request", response.error);
+            }
+            fallbackToWindowOpen();
+          }
+        });
+        return;
+      } catch (err) {
+        console.warn("[AutoForm] CTA request threw", err);
+        fallbackToWindowOpen();
         return;
       }
     }
-    window.location.href = targetUrl;
+    fallbackToWindowOpen();
+  }
+
+  async function handleFloatingButtonClick(event) {
+    event.preventDefault();
+    if (floatingButtonUpsellActive && !isPaidEdition()) {
+      openUnlimitedCtaInNewTab();
+      return;
+    }
+    if (floatingButtonBusy) return;
+    floatingButtonBusy = true;
+    const btn = floatingButton;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "入力中…";
+    }
+    const resetButtonState = () => {
+      floatingButtonBusy = false;
+      if (btn) {
+        btn.disabled = false;
+        if (!floatingButtonCompletionPending) {
+          btn.textContent = getFloatingButtonBaseLabel();
+        }
+      }
+    };
+    try {
+      let result = null;
+      let multiFrameResult = null;
+      try {
+        multiFrameResult = await requestManualFillAcrossFrames();
+      } catch (err) {
+        console.warn("[AutoForm] cross-frame fill request failed", err);
+      }
+      if (multiFrameResult?.ok) {
+        result = multiFrameResult;
+      } else {
+        if (multiFrameResult?.error) {
+          console.warn("[AutoForm] cross-frame fill rejected", multiFrameResult.error);
+        }
+        result = await performRemoteFill("floating_button");
+      }
+      if (result?.quota) {
+        applyQuotaStateToFloatingButton(result.quota);
+      } else {
+        applyQuotaStateToFloatingButton(null);
+      }
+      if (result?.error) {
+        console.warn("[AutoForm] floating button fill failed", result.error);
+      }
+    } catch (err) {
+      if (err?.quota) {
+        applyQuotaStateToFloatingButton(err.quota);
+      }
+      console.error("[AutoForm] floating button fill threw", err);
+    } finally {
+      resetButtonState();
+    }
   }
 
   function getPageHtml() {
@@ -960,9 +1152,46 @@
     });
   }
 
-  async function performRemoteFill() {
+  async function performRemoteFill(context = null) {
+    if (!masterEnabled) {
+      const disabledMessage = "拡張機能が無効化されています";
+      if (isTopFrame) {
+        reportFillResultToBackground({
+          ok: false,
+          message: disabledMessage,
+          code: "MASTER_DISABLED",
+          source: context || null
+        });
+      }
+      return { error: disabledMessage, code: "MASTER_DISABLED" };
+    }
+    if (document.querySelector('input[type="password"]')) {
+      const blockedMessage = "ログインページでは自動入力を無効にしています";
+      if (isTopFrame) {
+        reportFillResultToBackground({
+          ok: false,
+          message: blockedMessage,
+          code: "PASSWORD_PAGE_BLOCKED",
+          source: context || null
+        });
+      }
+      return { error: blockedMessage, code: "PASSWORD_PAGE_BLOCKED" };
+    }
     if (remoteFillPromise) return remoteFillPromise;
     remoteFillPromise = (async () => {
+      if (isPaidEdition() && !hasPaidAccess()) {
+        const lockedMessage = "APIキーを設定すると入力できます";
+        if (isTopFrame) {
+          reportFillResultToBackground({
+            ok: false,
+            message: lockedMessage,
+            code: "PAID_API_KEY_MISSING",
+            planStatus: "paid-missing",
+            source: context || null
+          });
+        }
+        return { error: lockedMessage, code: "PAID_API_KEY_MISSING", planStatus: "paid-missing" };
+      }
       const formsCount = (() => {
         try {
           return document.forms ? document.forms.length : 0;
@@ -991,17 +1220,49 @@
             return null;
           }
         })();
-        const { items, durationMs, throttleMode, quota } = await requestFormItemsViaBackground(html, sendRecord, pageUrl);
+        const { items, durationMs, throttleMode, quota, planStatus } = await requestFormItemsViaBackground(html, sendRecord, pageUrl);
         lastThrottleMode = throttleMode || lastThrottleMode;
         const applied = applyJsonInstructions(items);
         if (applied.success > 0) {
           const durationSeconds = typeof durationMs === "number" ? durationMs / 1000 : null;
           showCompletionNotice(durationSeconds, lastThrottleMode);
         }
-        return { applied, quota };
+        applyQuotaStateToFloatingButton(quota);
+        if (isTopFrame) {
+          reportFillResultToBackground({
+            ok: true,
+            applied: applied?.success || 0,
+            total: typeof applied?.total === "number" ? applied.total : Array.isArray(items) ? items.length : null,
+            quota: quota || null,
+            planStatus: planStatus || null,
+            durationMs: typeof durationMs === "number" ? durationMs : null,
+            source: context || null
+          });
+        }
+        return { applied, quota, planStatus };
       } catch (err) {
         console.error("[AutoForm] API 実行でエラー", err);
-        return { error: err?.message || "APIエラー", quota: err?.quota || null };
+        const quota = err?.quota && typeof err.quota === "object" ? err.quota : null;
+        if (quota) {
+          applyQuotaStateToFloatingButton(quota);
+        }
+        const errorMessage = err?.message || "APIエラー";
+        if (isTopFrame) {
+          reportFillResultToBackground({
+            ok: false,
+            message: errorMessage,
+            code: err?.code || null,
+            quota: quota || null,
+            planStatus: err?.planStatus || null,
+            source: context || null
+          });
+        }
+        return {
+          error: errorMessage,
+          quota,
+          code: err?.code || null,
+          planStatus: err?.planStatus || null
+        };
       }
     })();
     const result = await remoteFillPromise;
@@ -1026,6 +1287,12 @@
             if (response?.quota && typeof response.quota === "object") {
               err.quota = response.quota;
             }
+            if (response?.code) {
+              err.code = response.code;
+            }
+            if (response?.planStatus) {
+              err.planStatus = response.planStatus;
+            }
             reject(err);
             return;
           }
@@ -1038,10 +1305,37 @@
             items,
             durationMs: response?.durationMs,
             throttleMode: response?.throttleMode,
-            quota: response?.quota || null
+            quota: response?.quota || null,
+            planStatus: response?.planStatus || null
           });
         }
       );
+    });
+  }
+
+  function refreshEditionStateFromBackground() {
+    if (!chrome?.runtime?.sendMessage) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: "autoform_get_quota_state" }, (response) => {
+          if (!chrome.runtime?.lastError) {
+            if (typeof response?.edition === "string") {
+              extensionEdition = response.edition;
+            }
+            refreshFloatingButtonBaseCopy();
+            if (response?.quota && typeof response.quota === "object") {
+              applyQuotaStateToFloatingButton(response.quota);
+            } else {
+              applyQuotaStateToFloatingButton(null);
+            }
+          }
+          resolve();
+        });
+      } catch (_) {
+        resolve();
+      }
     });
   }
 
@@ -1049,19 +1343,36 @@
     if (!chrome?.runtime?.sendMessage) {
       return Promise.resolve({ error: "runtime_unavailable" });
     }
-    return new Promise((resolve) => {
-      try {
-        chrome.runtime.sendMessage({ type: "autoform_manual_fill_all_frames" }, (response) => {
-          if (chrome.runtime.lastError) {
-            resolve({ error: chrome.runtime.lastError.message });
-            return;
+    return getSendRecordFromStorage()
+      .catch(() => ({ ...DEFAULT_SEND_RECORD }))
+      .then((sendRecord) => {
+        const pageUrl = (() => {
+          try {
+            return window.location?.href || null;
+          } catch (_) {
+            return null;
           }
-          resolve(response || {});
+        })();
+        return new Promise((resolve) => {
+          try {
+            chrome.runtime.sendMessage(
+              {
+                type: "autoform_manual_fill_all_frames",
+                payload: { sendRecord, pageUrl, source: "manual-fill" }
+              },
+              (response) => {
+                if (chrome.runtime.lastError) {
+                  resolve({ error: chrome.runtime.lastError.message });
+                  return;
+                }
+                resolve(response || {});
+              }
+            );
+          } catch (err) {
+            resolve({ error: err?.message || "manual_fill_failed" });
+          }
         });
-      } catch (err) {
-        resolve({ error: err?.message || "manual_fill_failed" });
-      }
-    });
+      });
   }
 
   function clearFloatingButtonCompletionTimer() {
@@ -1111,7 +1422,7 @@
     btn.style.transform = "translateY(6px)";
     setTimeout(() => {
       if (!floatingButton || btn.dataset.autoformResetting !== "1") return;
-      btn.textContent = FLOATING_BUTTON_LABEL_DEFAULT;
+      btn.textContent = getFloatingButtonBaseLabel();
       applyFloatingButtonDefaultStyle(btn);
       requestAnimationFrame(() => {
         btn.style.opacity = "1";
@@ -1253,7 +1564,7 @@
     if (count >= MIN_INPUTS_FOR_AUTO) {
       autoFillTriggered = true;
       showDetectionNotice();
-      performRemoteFill().then((result) => {
+      performRemoteFill("auto-detect").then((result) => {
         if (result?.error) {
           autoFillTriggered = false;
         }
@@ -1491,15 +1802,21 @@
       return { applied };
     }
     if (command === "autoform_manual_fill") {
-      return performRemoteFill().then((result) => {
+      return performRemoteFill("manual-fill").then((result) => {
         if (result?.applied) {
           return {
             filled: result.applied.success || 0,
             applied: result.applied,
-            quota: result.quota || null
+            quota: result.quota || null,
+            planStatus: result.planStatus || null
           };
         }
-        return { error: result?.error || "入力に失敗しました", quota: result?.quota || null };
+        return {
+          error: result?.error || "入力に失敗しました",
+          quota: result?.quota || null,
+          code: result?.code || null,
+          planStatus: result?.planStatus || null
+        };
       });
     }
     if (command === "autoform_count_inputs") {
@@ -1511,6 +1828,18 @@
       return {
         forms: countActualForms(document),
         controls: countFormControls(document)
+      };
+    }
+    if (command === "autoform_collect_frame_html") {
+      return {
+        html: getPageHtml(),
+        url: (() => {
+          try {
+            return window.location?.href || null;
+          } catch (_) {
+            return null;
+          }
+        })()
       };
     }
     if (command === "autoform_apply_send_content") {
@@ -1587,34 +1916,49 @@
   }
 
   function applyAutoRunState(value) {
-    autoRunOnOpen = value !== false;
+    autoRunOnOpen = value === true;
     updateAutoFillState();
   }
 
   function init() {
-    if (!chrome?.storage?.sync) {
+    if (!chrome?.storage?.sync && !chrome?.storage?.local) {
       startAutoFill();
       updateFloatingButtonVisibility(false);
       return;
     }
 
-    chrome.storage.sync.get([STORAGE_KEY, AUTO_RUN_STORAGE_KEY, FLOATING_BUTTON_STORAGE_KEY], (res) => {
-      masterEnabled = res?.[STORAGE_KEY] !== false;
-      autoRunOnOpen = res?.[AUTO_RUN_STORAGE_KEY] !== false;
-      updateFloatingButtonVisibility(res?.[FLOATING_BUTTON_STORAGE_KEY] === true);
-      updateAutoFillState();
-    });
+    loadSettingsSnapshot(SETTINGS_STORAGE_KEYS)
+      .then((snapshot) => {
+        const hasMasterOverride = Object.prototype.hasOwnProperty.call(snapshot, STORAGE_KEY);
+        const hasAutoRunOverride = Object.prototype.hasOwnProperty.call(snapshot, AUTO_RUN_STORAGE_KEY);
+        masterEnabled = hasMasterOverride ? snapshot[STORAGE_KEY] !== false : true;
+        autoRunOnOpen = hasAutoRunOverride ? snapshot[AUTO_RUN_STORAGE_KEY] === true : false;
+        updateFloatingButtonVisibility(snapshot?.[FLOATING_BUTTON_STORAGE_KEY] === true);
+        applyEditionStateFromApiKey(snapshot?.[API_KEY_STORAGE_KEY]);
+      })
+      .catch(() => {
+        masterEnabled = true;
+        autoRunOnOpen = false;
+        updateFloatingButtonVisibility(false);
+      })
+      .finally(() => {
+        updateAutoFillState();
+        refreshEditionStateFromBackground().catch(() => {});
+      });
 
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area !== "sync") return;
+      if (area !== "sync" && area !== "local") return;
       if (changes[STORAGE_KEY]) {
         applyEnabledState(changes[STORAGE_KEY].newValue !== false);
       }
       if (changes[AUTO_RUN_STORAGE_KEY]) {
-        applyAutoRunState(changes[AUTO_RUN_STORAGE_KEY].newValue !== false);
+        applyAutoRunState(changes[AUTO_RUN_STORAGE_KEY].newValue === true);
       }
       if (changes[FLOATING_BUTTON_STORAGE_KEY]) {
         updateFloatingButtonVisibility(changes[FLOATING_BUTTON_STORAGE_KEY].newValue === true);
+      }
+      if (changes[API_KEY_STORAGE_KEY]) {
+        applyEditionStateFromApiKey(changes[API_KEY_STORAGE_KEY].newValue);
       }
     });
 

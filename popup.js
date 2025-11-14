@@ -9,16 +9,30 @@
     "https://autoform-chrome-extention-server-csasaeerewb7b9ga.japaneast-01.azurewebsites.net/chrome_extension";
   const DEFAULT_PLAN = "free";
   const PRIORITY_UNLIMITED_THRESHOLD = 10000;
-  const PRIORITY_UNLIMITED_LABEL = "無制限 ※ 期間限定";
-  const PRIORITY_EXHAUSTED_MESSAGE =
-    "全自動AI営業ツール『Aimsales』では無制限に使えます。お申し込みはこちら https://forms.gle/FWkuxr8HenuLkARC7";
+  const PRIORITY_UNLIMITED_LABEL = "∞ ※ 期間限定";
+  const FREE_PLAN_EXHAUSTED_MESSAGE = "本日の利用可能数を使い切りました。Aimsalesなら常時優先・一括送信が可能です";
+  const FREE_PLAN_EXHAUSTED_NOTE = `${FREE_PLAN_EXHAUSTED_MESSAGE} https://forms.gle/FWkuxr8HenuLkARC7`;
   const PRIORITY_COUNT_LABEL_DEFAULT = "本日の残り回数";
   const PRIORITY_COUNT_LABEL_EMPTY = "本日の残り回数はありません";
+  const PAID_API_KEY_PROMPT = "APIキーを入力してください";
+  const PAID_EDITION_UNLIMITED_LABEL = "∞";
   const clone = (value) => JSON.parse(JSON.stringify(value || {}));
+  const shuffleArray = (input) => {
+    if (!Array.isArray(input)) return [];
+    const result = input.slice();
+    for (let index = result.length - 1; index > 0; index -= 1) {
+      const swapIndex = Math.floor(Math.random() * (index + 1));
+      const temp = result[index];
+      result[index] = result[swapIndex];
+      result[swapIndex] = temp;
+    }
+    return result;
+  };
   let runtimeConfig = clone(RuntimeConfig?.DEFAULTS || {});
   let EDITION = runtimeConfig?.edition || "free";
-  let REQUIRE_API_KEY = Boolean(runtimeConfig?.rules?.requireApiKey);
+  let REQUIRE_API_KEY = EDITION === "paid";
   let currentQuotaState = runtimeConfig?.quota || null;
+  let configReloadPromise = null;
   const DEFAULT_SEND_CONTENT = {
     name: "営業 太郎",
     name_kana: "えいぎょう たろう",
@@ -106,21 +120,110 @@
   let lastAutoSavedSnapshot = null;
   let fillNowButton = null;
   let promoScrollAnimationFrame = null;
+  let popupDomReady = false;
+  let lastPriorityDisplay = null;
+
+  const hasTrimmedApiKey = () => Boolean(currentApiKey && currentApiKey.trim());
+  const isPaidEdition = () => EDITION === "paid";
+  const hasPaidAccess = () => isPaidEdition() && hasTrimmedApiKey();
+
+  const getApiKeyInputs = () => Array.from(document.querySelectorAll("[data-api-key-input]"));
+  const setApiKeyInputsValue = (value) => {
+    getApiKeyInputs().forEach((input) => {
+      if (document.activeElement === input) return;
+      input.value = value;
+    });
+  };
+
+  function applyRuntimeConfigUpdate(nextConfig) {
+    if (!nextConfig || typeof nextConfig !== "object") {
+      return runtimeConfig;
+    }
+    runtimeConfig = nextConfig;
+    EDITION = runtimeConfig?.edition || "free";
+    REQUIRE_API_KEY = EDITION === "paid";
+    applyApiKeyCardVisibility();
+    applyManualFillAvailability();
+    applyFloatingButtonEditionRules();
+    return runtimeConfig;
+  }
+
+  function handleConfigReloadResult(config) {
+    if (!config || typeof config !== "object") {
+      return null;
+    }
+    applyRuntimeConfigUpdate(config);
+    if (document.readyState !== "loading") {
+      renderPromoBlock();
+    }
+    const quota = config?.quota && typeof config.quota === "object" ? config.quota : null;
+    if (quota) {
+      applyQuotaToUI(quota);
+    }
+    return quota;
+  }
+
+  function forceConfigReload(reason = "ui_request") {
+    if (configReloadPromise) {
+      return configReloadPromise;
+    }
+    const plan = EDITION || DEFAULT_PLAN;
+    if (!chrome?.runtime?.sendMessage || typeof RuntimeConfig?.loadRuntimeConfig !== "function") {
+      const loader = RuntimeConfig?.loadRuntimeConfig
+        ? RuntimeConfig.loadRuntimeConfig({ serverBase: SERVER_BASE, plan, forceReload: true })
+            .then((cfg) => handleConfigReloadResult(cfg))
+            .catch((err) => {
+              console.error("[AutoForm] config refresh failed", err);
+              return null;
+            })
+        : Promise.resolve(null);
+      configReloadPromise = loader.finally(() => {
+        configReloadPromise = null;
+      });
+      return configReloadPromise;
+    }
+    configReloadPromise = new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        { type: "autoform_refresh_runtime_config", reason },
+        (response) => {
+          if (chrome.runtime?.lastError) {
+            resolve({ ok: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(response || { ok: false });
+        }
+      );
+    })
+      .then((response) => {
+        if (response?.ok && response.config) {
+          return handleConfigReloadResult(response.config);
+        }
+        const quota = response?.quota && typeof response.quota === "object" ? response.quota : null;
+        if (quota) {
+          applyQuotaToUI(quota);
+        }
+        return quota;
+      })
+      .catch((err) => {
+        console.error("[AutoForm] config refresh failed", err);
+        return null;
+      })
+      .finally(() => {
+        configReloadPromise = null;
+      });
+    return configReloadPromise;
+  }
 
   const runtimeConfigReady =
     typeof RuntimeConfig?.loadRuntimeConfig === "function"
       ? RuntimeConfig.loadRuntimeConfig({ serverBase: SERVER_BASE, plan: EDITION || DEFAULT_PLAN })
           .then((cfg) => {
-            runtimeConfig = cfg || runtimeConfig || {};
-            EDITION = runtimeConfig?.edition || "free";
-            REQUIRE_API_KEY = Boolean(runtimeConfig?.rules?.requireApiKey);
-            if (runtimeConfig?.quota) {
-              currentQuotaState = runtimeConfig.quota;
-            }
+            applyRuntimeConfigUpdate(cfg || runtimeConfig || {});
             return runtimeConfig;
           })
           .catch((err) => {
             console.error("[AutoForm] failed to load runtime config", err);
+            applyRuntimeConfigUpdate(runtimeConfig);
             return runtimeConfig;
           })
       : Promise.resolve(runtimeConfig);
@@ -201,56 +304,144 @@
   }
 
   function applyManualFillAvailability() {
-    const quotaOk = hasQuotaRemaining();
-    const apiKeyOk = !REQUIRE_API_KEY || Boolean(currentApiKey);
-    setFillNowEnabled(quotaOk && apiKeyOk);
-    return quotaOk;
+    const planPaid = isPaidEdition();
+    const quotaOk = planPaid ? true : hasQuotaRemaining();
+    const accessOk = planPaid ? hasPaidAccess() : true;
+    const enabled = quotaOk && accessOk;
+    setFillNowEnabled(enabled);
+    if (!enabled) {
+      if (planPaid && !hasPaidAccess()) {
+        setManualStatus("APIキーを設定すると入力できます", true);
+      } else if (!planPaid && !quotaOk) {
+        setManualStatus(FREE_PLAN_EXHAUSTED_MESSAGE, true);
+      }
+    } else {
+      const statusEl = qs("manual-status");
+      if (statusEl) {
+        const text = statusEl.textContent?.trim();
+        if (text === FREE_PLAN_EXHAUSTED_MESSAGE || text === "APIキーを設定すると入力できます") {
+          setManualStatus("");
+        }
+      }
+    }
+    return enabled;
   }
 
   function setFloatingButtonStatus(message, isError = false) {
     const statusEl = qs("floating-button-status");
     if (!statusEl) return;
+    if (shouldSuppressFloatingButtonControls()) {
+      statusEl.textContent = "";
+      statusEl.style.display = "none";
+      return;
+    }
     statusEl.textContent = message || "";
     statusEl.style.color = isError ? "#dc2626" : "#64748b";
     statusEl.style.display = message ? "block" : "none";
   }
 
-  function setPlanStatus(hasKey) {
+  function setPlanStatus() {
     const planEl = qs("plan-status");
     const badgeEl = qs("plan-badge");
-    const isPaidEdition = EDITION === "paid" || Boolean(hasKey);
-    const label = isPaidEdition ? "有料版" : "無料版";
+    const manualPillEl = qs("manual-plan-pill");
+    const planPaid = isPaidEdition();
+    const label = planPaid ? "有料版" : "無料版";
     if (planEl) {
       planEl.textContent = label;
-      planEl.classList.toggle("plan-status-paid", isPaidEdition);
+      planEl.classList.toggle("plan-status-paid", planPaid);
     }
     if (badgeEl) {
       badgeEl.textContent = label;
-      badgeEl.classList.toggle("plan-badge-paid", isPaidEdition);
+      badgeEl.classList.toggle("plan-badge-paid", planPaid);
+    }
+    if (manualPillEl) {
+      manualPillEl.textContent = label;
+      manualPillEl.classList.toggle("is-paid", planPaid);
     }
   }
 
   function setApiKeyStatus(message, isError = false) {
     const statusEl = qs("api-key-status");
     if (!statusEl) return;
+    if (!isPaidEdition()) {
+      statusEl.textContent = "このプランではAPIキーは不要です";
+      statusEl.style.color = "#475569";
+      return;
+    }
     statusEl.textContent = message;
     statusEl.style.color = isError ? "#b91c1c" : "#475569";
   }
 
-  function applyApiKeyCardVisibility() {
-    const card = document.querySelector(".api-key-card");
-    if (!card) return;
-    card.style.display = REQUIRE_API_KEY ? "" : "none";
+  function shouldSuppressFloatingButtonControls() {
+    return false;
   }
 
-  function setPriorityNumberDisplay(text) {
+  function applyFloatingButtonEditionRules() {
+    const hide = shouldSuppressFloatingButtonControls();
+    if (!popupDomReady) return;
+    const row = document.querySelector("[data-floating-button-row]");
+    const checkbox = qs("show-floating-button");
+    const statusEl = qs("floating-button-status");
+    if (row) {
+      row.style.display = hide ? "none" : "";
+    }
+    if (checkbox) {
+      checkbox.disabled = hide;
+      if (hide) {
+        checkbox.checked = false;
+      }
+    }
+    if (statusEl) {
+      if (hide) {
+        statusEl.textContent = "";
+      }
+      const hasMessage = Boolean(statusEl.textContent && !hide);
+      statusEl.style.display = hasMessage ? "block" : "none";
+    }
+  }
+
+  function applyApiKeyCardVisibility() {
+    const card = document.querySelector(".api-key-card");
+    const inlineCard = document.getElementById("api-key-inline-card");
+    const planRequiresKey = isPaidEdition();
+    if (!planRequiresKey) {
+      if (inlineCard) {
+        inlineCard.classList.remove("is-visible");
+      }
+      if (card) {
+        card.style.display = "none";
+      }
+      return;
+    }
+    const needsInline = !hasTrimmedApiKey();
+    if (inlineCard) {
+      inlineCard.classList.toggle("is-visible", needsInline);
+    }
+    if (card) {
+      card.style.display = "";
+    }
+  }
+
+  function setPriorityNumberDisplay(text, options = {}) {
+    const { hideUnit = false } = options;
     const nodes = new Set();
     const legacy = document.getElementById("priority-remaining");
     if (legacy) nodes.add(legacy);
     document.querySelectorAll("[data-priority-number]").forEach((el) => nodes.add(el));
+    const needsCompactDisplay = text === PAID_API_KEY_PROMPT;
+    const shouldHideUnit =
+      hideUnit ||
+      text === PAID_API_KEY_PROMPT ||
+      text === PAID_EDITION_UNLIMITED_LABEL ||
+      text === PRIORITY_UNLIMITED_LABEL;
     nodes.forEach((node) => {
       node.textContent = text;
+      node.classList.toggle("priority-number-small", needsCompactDisplay);
     });
+    document.querySelectorAll("[data-priority-unit]").forEach((unit) => {
+      unit.style.display = shouldHideUnit ? "none" : "inline";
+    });
+    triggerPriorityFigurePulse(text);
   }
 
   function setPriorityNoteVisibility(message, visible) {
@@ -295,17 +486,65 @@
     }
   }
 
+  function computePaidPlanUiState(rawPlan) {
+    if (!rawPlan || typeof rawPlan !== "object") {
+      return { remainingLabel: "", note: "" };
+    }
+    const remainingCandidate = rawPlan.remaining_days ?? rawPlan.remainingDays;
+    const remainingValue = Number(remainingCandidate);
+    const showRemaining = Number.isFinite(remainingValue) && remainingValue >= 0 && remainingValue < 30;
+    const remainingLabel = showRemaining ? `有効日数あと${remainingValue}日` : "";
+    const note = typeof rawPlan.note === "string" ? rawPlan.note.trim() : "";
+    return { remainingLabel, note };
+  }
+
+  function setPaidPlanNote(message) {
+    const noteEl = document.getElementById("priority-paid-note");
+    if (!noteEl) return;
+    const normalized = typeof message === "string" ? message.trim() : "";
+    if (normalized) {
+      noteEl.textContent = normalized;
+      noteEl.style.display = "block";
+    } else {
+      noteEl.textContent = "";
+      noteEl.style.display = "none";
+    }
+  }
+
+  function getPriorityCardElement() {
+    return document.querySelector("[data-priority-card]") || document.querySelector(".priority-card");
+  }
+
   function setPriorityCardMode(mode) {
-    const card = document.querySelector("[data-priority-card]");
+    const card = getPriorityCardElement();
     if (!card) return;
     card.dataset.mode = mode || "";
     card.classList.toggle("is-shared", mode === "shared");
   }
 
-  function setPriorityCountLabel(isEmpty) {
+  function setPriorityCardVisible(visible) {
+    const card = getPriorityCardElement();
+    if (!card) return;
+    const isVisible = Boolean(visible);
+    if (isVisible) {
+      card.style.display = "";
+      card.removeAttribute("hidden");
+      card.setAttribute("aria-hidden", "false");
+      card.dataset.priorityHidden = "0";
+    } else {
+      card.style.display = "none";
+      card.setAttribute("hidden", "true");
+      card.setAttribute("aria-hidden", "true");
+      card.dataset.priorityHidden = "1";
+    }
+  }
+
+  function setPriorityCountLabel(isEmpty, options = {}) {
     const label = document.querySelector(".priority-count-label");
     if (!label) return;
-    label.textContent = isEmpty ? PRIORITY_COUNT_LABEL_EMPTY : PRIORITY_COUNT_LABEL_DEFAULT;
+    const baseText = isEmpty ? PRIORITY_COUNT_LABEL_EMPTY : PRIORITY_COUNT_LABEL_DEFAULT;
+    const suffix = typeof options.suffixText === "string" ? options.suffixText.trim() : "";
+    label.textContent = suffix ? `${baseText}（${suffix}）` : baseText;
   }
 
   function setPriorityWarningState(active) {
@@ -313,6 +552,18 @@
     if (!badge) return;
     badge.classList.toggle("is-visible", Boolean(active));
     badge.setAttribute("aria-hidden", (!active).toString());
+  }
+
+  function triggerPriorityFigurePulse(nextDisplay) {
+    if (nextDisplay === lastPriorityDisplay) return;
+    lastPriorityDisplay = nextDisplay;
+    const figures = document.querySelectorAll(".priority-figure");
+    figures.forEach((figure) => {
+      figure.classList.remove("is-updated");
+      void figure.offsetWidth;
+      figure.classList.add("is-updated");
+      setTimeout(() => figure.classList.remove("is-updated"), 900);
+    });
   }
 
   function meetsUnlimitedThreshold(value) {
@@ -334,6 +585,76 @@
     return [priorityRules.dailyInitial, priorityRules.dailyAfter].some((value) => meetsUnlimitedThreshold(value));
   }
 
+  function parseQuotaNumber(value) {
+    if (value === Infinity) return Infinity;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      const normalized = trimmed.toLowerCase();
+      if (normalized === "infinity" || normalized === "inf") {
+        return Infinity;
+      }
+      const numeric = Number(trimmed);
+      return Number.isFinite(numeric) ? numeric : null;
+    }
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : null;
+    }
+    return null;
+  }
+
+  function getConfiguredPriorityThreshold() {
+    const configured = runtimeConfig?.ui?.priorityCard?.showWhenRemainingAtMost;
+    if (configured == null) return null;
+    const numeric = Number(configured);
+    if (!Number.isFinite(numeric) || numeric < 0) return null;
+    return Math.max(0, Math.floor(numeric));
+  }
+
+  function getPriorityCardFallbackLimit(limitValue) {
+    if (Number.isFinite(limitValue) && limitValue > 0) {
+      return limitValue;
+    }
+    const priorityRules = runtimeConfig?.rules?.priority;
+    if (!priorityRules) return null;
+    const candidates = [
+      parseQuotaNumber(priorityRules.dailyInitial),
+      parseQuotaNumber(priorityRules.dailyAfter)
+    ];
+    const fallback = candidates.find((value) => Number.isFinite(value) && value > 0);
+    return fallback ?? null;
+  }
+
+  function resolvePriorityCardThreshold(limitValue) {
+    const configured = getConfiguredPriorityThreshold();
+    if (configured != null) {
+      return configured;
+    }
+    const fallbackLimit = getPriorityCardFallbackLimit(limitValue);
+    if (!Number.isFinite(fallbackLimit) || fallbackLimit <= 0) {
+      return null;
+    }
+    return Math.max(0, Math.floor(fallbackLimit / 2));
+  }
+
+  function shouldDisplayPriorityCard(remainingValue, limitValue) {
+    const threshold = resolvePriorityCardThreshold(limitValue);
+    if (threshold == null) return true;
+    if (!Number.isFinite(remainingValue)) return true;
+    return remainingValue <= threshold;
+  }
+
+  function isQuotaUnlimited(quota) {
+    if (!quota || typeof quota !== "object") return false;
+    const plan = typeof quota.plan === "string" ? quota.plan.trim().toLowerCase() : "";
+    if (plan === "unlimited") return true;
+    const mode = typeof quota.mode === "string" ? quota.mode.trim().toLowerCase() : "";
+    if (mode === "unlimited") return true;
+    const remainingValue = parseQuotaNumber(quota.remaining);
+    const limitValue = parseQuotaNumber(quota.daily_limit ?? quota.limit);
+    return meetsUnlimitedThreshold(remainingValue) || meetsUnlimitedThreshold(limitValue);
+  }
+
   function quotaIndicatesDepleted(quota) {
     if (!quota || typeof quota !== "object") return false;
     const remaining = quota.remaining;
@@ -344,26 +665,32 @@
     return numeric <= 0;
   }
 
-  function isQuotaExhaustedError(message, quota) {
+  function isQuotaExhaustedError(info = {}) {
+    if (!info || typeof info !== "object") return false;
+    const { code, message, quota } = info;
+    if (code === "FREE_QUOTA_LIMIT") return true;
     if (quotaIndicatesDepleted(quota)) return true;
     if (typeof message !== "string") return false;
-    return message.trim() === PRIORITY_EXHAUSTED_MESSAGE.trim();
+    return message.trim() === FREE_PLAN_EXHAUSTED_MESSAGE.trim();
+  }
+
+  function getBasePromoCards(carousel) {
+    if (!carousel) return [];
+    return Array.from(carousel.querySelectorAll(".promo-card")).filter((card) => card.dataset.promoClone !== "1");
   }
 
   function scrollPromoToIndex(index) {
     if (typeof index !== "number" || index < 0) return;
     const carousel = document.getElementById("dynamic-info-content");
     if (!carousel) return;
-    const cards = carousel.querySelectorAll(".promo-card");
+    const cards = getBasePromoCards(carousel);
     const target = cards[index];
     if (!target) return;
-    const carouselRect = carousel.getBoundingClientRect();
-    const targetRect = target.getBoundingClientRect();
-    const offset = targetRect.left - carouselRect.left;
-    carousel.scrollTo({
-      left: carousel.scrollLeft + offset,
-      behavior: "smooth"
-    });
+    const firstCard = cards[0];
+    const baseOffset = firstCard ? firstCard.offsetLeft : 0;
+    const relativeOffset = target.offsetLeft - baseOffset;
+    const destination = baseOffset + relativeOffset;
+    carousel.scrollTo({ left: destination, behavior: "smooth" });
   }
 
   function initPromoCarouselDots(count) {
@@ -397,13 +724,15 @@
     const carousel = document.getElementById("dynamic-info-content");
     if (!dotsContainer || !carousel) return;
     const dots = dotsContainer.querySelectorAll(".promo-dot");
-    const cards = carousel.querySelectorAll(".promo-card");
+    const cards = getBasePromoCards(carousel);
     if (!dots.length || !cards.length) return;
     let activeIndex = 0;
-    const viewportCenter = carousel.scrollLeft + carousel.clientWidth / 2;
+    const firstCard = cards[0];
+    const baseOffset = firstCard ? firstCard.offsetLeft : 0;
+    const viewportCenter = carousel.scrollLeft - baseOffset + carousel.clientWidth / 2;
     cards.forEach((card, index) => {
-      const cardCenter = card.offsetLeft + card.offsetWidth / 2;
-      const activeCenter = cards[activeIndex].offsetLeft + cards[activeIndex].offsetWidth / 2;
+      const cardCenter = card.offsetLeft - baseOffset + card.offsetWidth / 2;
+      const activeCenter = cards[activeIndex].offsetLeft - baseOffset + cards[activeIndex].offsetWidth / 2;
       if (Math.abs(cardCenter - viewportCenter) < Math.abs(activeCenter - viewportCenter)) {
         activeIndex = index;
       }
@@ -413,6 +742,40 @@
       dot.classList.toggle("is-active", isActive);
       dot.setAttribute("aria-pressed", isActive.toString());
       dot.tabIndex = isActive ? 0 : -1;
+    });
+  }
+
+  function preparePromoCarouselLoop(carousel, cardCount) {
+    if (!carousel) return;
+    if (!Number.isFinite(cardCount) || cardCount < 2) return;
+    const baseCards = getBasePromoCards(carousel);
+    if (baseCards.length < 2) return;
+    const setWidth = (() => {
+      const firstCard = baseCards[0];
+      const lastCard = baseCards[baseCards.length - 1];
+      if (!firstCard || !lastCard) return 0;
+      const firstOffset = firstCard.offsetLeft;
+      const lastEdge = lastCard.offsetLeft + lastCard.offsetWidth;
+      return Math.max(0, lastEdge - firstOffset);
+    })();
+    const beforeFragment = document.createDocumentFragment();
+    for (let index = baseCards.length - 1; index >= 0; index -= 1) {
+      const prependClone = baseCards[index].cloneNode(true);
+      prependClone.dataset.promoClone = "1";
+      beforeFragment.appendChild(prependClone);
+    }
+    const afterFragment = document.createDocumentFragment();
+    baseCards.forEach((card) => {
+      const appendClone = card.cloneNode(true);
+      appendClone.dataset.promoClone = "1";
+      afterFragment.appendChild(appendClone);
+    });
+    carousel.insertBefore(beforeFragment, carousel.firstChild);
+    carousel.appendChild(afterFragment);
+    requestAnimationFrame(() => {
+      if (setWidth > 0) {
+        carousel.scrollLeft = setWidth;
+      }
     });
   }
 
@@ -437,16 +800,42 @@
 
   function applyQuotaToUI(quota) {
     currentQuotaState = quota || null;
-    const hasPriorityView =
-      document.getElementById("priority-remaining") || document.querySelector("[data-priority-card]");
-    if (!hasPriorityView) {
+    const finalizeQuotaUiUpdate = () => {
       applyManualFillAvailability();
+      applyFloatingButtonEditionRules();
+    };
+    const hasPriorityView = document.getElementById("priority-remaining") || getPriorityCardElement();
+    if (!hasPriorityView) {
+      finalizeQuotaUiUpdate();
       return;
     }
+    const planPaid = isPaidEdition();
+    const apiKeyAvailable = hasTrimmedApiKey();
     setPriorityCountLabel(false);
     setPriorityWarningState(false);
+    if (planPaid) {
+      const paidPlanState = computePaidPlanUiState(runtimeConfig?.paid_plan);
+      if (paidPlanState.remainingLabel) {
+        setPriorityCountLabel(false, { suffixText: paidPlanState.remainingLabel });
+      }
+      setPaidPlanNote(paidPlanState.note);
+      setPriorityCardVisible(true);
+      if (!apiKeyAvailable) {
+        setPriorityNumberDisplay("--");
+        setPriorityCardMode("blocked");
+        setPriorityNoteVisibility(PAID_API_KEY_PROMPT, true);
+      } else {
+        setPriorityNumberDisplay(PAID_EDITION_UNLIMITED_LABEL);
+        setPriorityCardMode("priority");
+        setPriorityNoteVisibility("", false);
+      }
+      finalizeQuotaUiUpdate();
+      return;
+    }
+    setPaidPlanNote("");
     const configUnlimited = priorityConfigIndicatesUnlimited();
     if (!quota) {
+      setPriorityCardVisible(true);
       if (configUnlimited) {
         setPriorityNumberDisplay(PRIORITY_UNLIMITED_LABEL);
         setPriorityCardMode("priority");
@@ -455,21 +844,18 @@
         setPriorityCardMode("unknown");
       }
       setPriorityNoteVisibility("", false);
-      applyManualFillAvailability();
+      finalizeQuotaUiUpdate();
       return;
     }
-    const parseQuotaNumber = (value) => {
-      const stringValue = typeof value === "string" ? value.trim().toLowerCase() : value;
-      if (stringValue === Infinity || stringValue === "infinity" || stringValue === "inf") {
-        return Infinity;
-      }
-      const numeric = Number(value);
-      if (!Number.isFinite(numeric)) return null;
-      return numeric;
-    };
     const formatFinite = (value) => String(Math.max(0, Math.floor(Number(value) || 0)));
     const remainingValue = parseQuotaNumber(quota.remaining);
     const limitValue = parseQuotaNumber(quota.daily_limit ?? quota.limit);
+    const shouldShowCard = shouldDisplayPriorityCard(remainingValue, limitValue);
+    setPriorityCardVisible(shouldShowCard);
+    if (!shouldShowCard) {
+      finalizeQuotaUiUpdate();
+      return;
+    }
     const unlimitedByQuota = meetsUnlimitedThreshold(remainingValue) || meetsUnlimitedThreshold(limitValue);
     const isUnlimited = unlimitedByQuota || configUnlimited;
     let display = "--";
@@ -487,31 +873,88 @@
     const isDepleted = !hasQuota;
     setPriorityCountLabel(isDepleted);
     setPriorityWarningState(isDepleted);
-    const noteMessage = hasQuota ? "" : quota.message || PRIORITY_EXHAUSTED_MESSAGE;
-    setPriorityNoteVisibility(noteMessage, !hasQuota);
-    applyManualFillAvailability();
+    const noteMessage = isDepleted ? quota.message || FREE_PLAN_EXHAUSTED_NOTE : "";
+    setPriorityNoteVisibility(noteMessage, isDepleted);
+    finalizeQuotaUiUpdate();
   }
 
-  function syncQuotaWithBackground() {
+  function syncQuotaWithBackground(options = {}) {
+    const { allowRefreshOnEmpty = true, reasonOnEmpty = "popup_quota_missing" } = options;
     if (!chrome?.runtime?.sendMessage) {
-      return Promise.resolve(null);
+      return allowRefreshOnEmpty ? forceConfigReload(reasonOnEmpty) : Promise.resolve(null);
     }
     return new Promise((resolve) => {
       try {
         chrome.runtime.sendMessage({ type: "autoform_get_quota_state" }, (response) => {
           if (chrome.runtime?.lastError) {
-            resolve(null);
+            if (allowRefreshOnEmpty) {
+              forceConfigReload(reasonOnEmpty)
+                .then((quota) => resolve(quota))
+                .catch(() => resolve(null));
+            } else {
+              resolve(null);
+            }
             return;
+          }
+          if (typeof response?.edition === "string" && response.edition && response.edition !== EDITION) {
+            EDITION = response.edition;
+            runtimeConfig.edition = EDITION;
+            REQUIRE_API_KEY = EDITION === "paid";
+            applyApiKeyCardVisibility();
+            setPlanStatus();
           }
           const quota = response?.quota || null;
           if (quota) {
             applyQuotaToUI(quota);
+            resolve(quota);
+            return;
           }
-          resolve(quota);
+          if (!allowRefreshOnEmpty) {
+            resolve(null);
+            return;
+          }
+          forceConfigReload(reasonOnEmpty)
+            .then((freshQuota) => resolve(freshQuota))
+            .catch(() => resolve(null));
         });
       } catch (_) {
-        resolve(null);
+        if (allowRefreshOnEmpty) {
+          forceConfigReload(reasonOnEmpty)
+            .then((quota) => resolve(quota))
+            .catch(() => resolve(null));
+        } else {
+          resolve(null);
+        }
       }
+    });
+  }
+
+  function initPriorityRefreshButton(button) {
+    if (!button) return;
+    const defaultLabel = button.getAttribute("aria-label") || "残り回数を再読み込み";
+    const defaultTitle = button.getAttribute("title") || defaultLabel;
+    const loadingLabel = `${defaultLabel}中`;
+    const setLoading = (loading) => {
+      button.disabled = loading;
+      button.dataset.loading = loading ? "1" : "0";
+      button.setAttribute("aria-busy", loading ? "true" : "false");
+      button.setAttribute("aria-label", loading ? loadingLabel : defaultLabel);
+      button.setAttribute("title", loading ? loadingLabel : defaultTitle);
+    };
+    button.addEventListener("click", () => {
+      if (button.dataset.loading === "1") return;
+      setLoading(true);
+      forceConfigReload("priority_card_refresh_button")
+        .then((quota) => {
+          if (quota) return quota;
+          return syncQuotaWithBackground({ allowRefreshOnEmpty: false });
+        })
+        .catch((err) => {
+          console.error("[AutoForm] priority refresh failed", err);
+        })
+        .finally(() => {
+          setLoading(false);
+        });
     });
   }
 
@@ -581,20 +1024,23 @@
       card.style.display = "";
     }
     let rendered = false;
-    if (cards.length) {
-      cards.forEach((promo) => {
+    const cardsToRender = shuffleArray(cards);
+    if (cardsToRender.length) {
+      cardsToRender.forEach((promo) => {
         const article = document.createElement("article");
         article.className = "promo-card";
         article.setAttribute("role", "listitem");
         article.dataset.promoId = promo.id;
+        delete article.dataset.promoClone;
         article.innerHTML = promo.html;
         if (promo.label) {
           article.setAttribute("aria-label", promo.label);
         }
         container.appendChild(article);
       });
+      preparePromoCarouselLoop(container, cardsToRender.length);
       rendered = true;
-      initPromoCarouselDots(cards.length);
+      initPromoCarouselDots(cardsToRender.length);
     } else if (text) {
       const fallbackArticle = document.createElement("article");
       fallbackArticle.className = "promo-card";
@@ -680,6 +1126,12 @@
 
   function initFloatingButtonToggle(checkbox) {
     if (!checkbox) return;
+    if (shouldSuppressFloatingButtonControls()) {
+      checkbox.checked = false;
+      checkbox.disabled = true;
+      setFloatingButtonStatus("");
+      return;
+    }
 
     const apply = (value) => {
       const enabled = value === true;
@@ -724,7 +1176,7 @@
       if (!granted) {
         checkbox.checked = false;
         chrome.storage.sync.set({ [FLOATING_BUTTON_STORAGE_KEY]: false });
-        setFloatingButtonStatus("全サイトアクセスを許可すると「無制限に使うには」ボタンを常時表示できます。", true);
+        setFloatingButtonStatus("全サイトアクセスを許可すると「∞に使うには」ボタンを常時表示できます。", true);
         return;
       }
       await enableAlwaysOnInjection();
@@ -737,31 +1189,37 @@
   }
 
   function loadApiKeyState() {
-    const input = qs("api-key-input");
     if (!chrome?.storage?.sync) {
       currentApiKey = "";
-      if (input) input.value = "";
-      setPlanStatus(false);
+      setApiKeyInputsValue("");
+      setPlanStatus();
       setApiKeyStatus("storage が利用できません (APIキー未設定)", true);
       applyManualFillAvailability();
+      applyApiKeyCardVisibility();
+      applyQuotaToUI(currentQuotaState);
       return;
     }
     chrome.storage.sync.get(API_KEY_STORAGE_KEY, (res) => {
+      const prevHasKey = Boolean(currentApiKey);
       const stored = res?.[API_KEY_STORAGE_KEY];
       currentApiKey = typeof stored === "string" ? stored : "";
-      if (input && document.activeElement !== input) {
-        input.value = currentApiKey;
-      }
-      setPlanStatus(Boolean(currentApiKey));
+      setApiKeyInputsValue(currentApiKey);
+      setPlanStatus();
       setApiKeyStatus(currentApiKey ? "保存済みのAPIキーを読み込みました" : "APIキーが未設定です");
       applyManualFillAvailability();
+      applyApiKeyCardVisibility();
+      applyQuotaToUI(currentQuotaState);
+      if (!prevHasKey && currentApiKey) {
+        forceConfigReload("api_key_synced").catch(() => {});
+      }
     });
   }
 
   function initApiKeySaveHandler(button) {
     if (!button) return;
+    const targetId = button.dataset?.apiKeyTarget;
     button.addEventListener("click", () => {
-      const input = qs("api-key-input");
+      const input = targetId ? document.getElementById(targetId) : qs("api-key-input");
       if (!input) return;
       const value = input.value.trim();
       if (!chrome?.storage?.sync) {
@@ -773,6 +1231,7 @@
         button.disabled = false;
         setApiKeyStatus(successMessage, isError);
       };
+      const hadApiKey = Boolean(currentApiKey);
       if (!value) {
         chrome.storage.sync.remove(API_KEY_STORAGE_KEY, () => {
           if (chrome.runtime?.lastError) {
@@ -780,8 +1239,10 @@
             return;
           }
           currentApiKey = "";
-          setPlanStatus(false);
+          setPlanStatus();
           applyManualFillAvailability();
+          applyApiKeyCardVisibility();
+          applyQuotaToUI(currentQuotaState);
           finish("APIキーを削除しました");
         });
         return;
@@ -792,9 +1253,12 @@
           return;
         }
         currentApiKey = value;
-        setPlanStatus(true);
+        setPlanStatus();
         applyManualFillAvailability();
+        applyApiKeyCardVisibility();
+        applyQuotaToUI(currentQuotaState);
         finish("APIキーを保存しました");
+        forceConfigReload(hadApiKey ? "api_key_updated" : "api_key_saved").catch(() => {});
       });
     });
   }
@@ -968,13 +1432,12 @@
       if (area === "sync" && Object.prototype.hasOwnProperty.call(changes, API_KEY_STORAGE_KEY)) {
         const nextValue = changes[API_KEY_STORAGE_KEY]?.newValue;
         currentApiKey = typeof nextValue === "string" ? nextValue : "";
-        const input = qs("api-key-input");
-        if (input && document.activeElement !== input) {
-          input.value = currentApiKey;
-        }
-        setPlanStatus(Boolean(currentApiKey));
+        setApiKeyInputsValue(currentApiKey);
+        setPlanStatus();
         setApiKeyStatus(currentApiKey ? "APIキーが更新されました" : "APIキーが未設定です");
         applyManualFillAvailability();
+        applyApiKeyCardVisibility();
+        applyQuotaToUI(currentQuotaState);
       }
     });
   });
@@ -1163,9 +1626,70 @@
     }
   }
 
+  function handleManualFillErrorState(errorInfo) {
+    if (!errorInfo || typeof errorInfo !== "object") {
+      setManualStatus("失敗: 入力に失敗しました", true);
+      return;
+    }
+    if (errorInfo.code === "PAID_API_KEY_MISSING") {
+      setManualStatus("失敗: 有料プランでは API キー が必須です", true);
+      return;
+    }
+    if (errorInfo.code === "PAID_API_KEY_INVALID") {
+      setManualStatus("失敗: API キーが無効/期限切れです", true);
+      return;
+    }
+    if (isQuotaExhaustedError(errorInfo)) {
+      setManualStatus(FREE_PLAN_EXHAUSTED_MESSAGE, true);
+      return;
+    }
+    const message = errorInfo.message && typeof errorInfo.message === "string" ? errorInfo.message : "入力に失敗しました";
+    setManualStatus(`失敗: ${message}`, true);
+  }
+
+  function flashPrimaryButtonSuccess(button) {
+    if (!button) return;
+    button.classList.add("is-success");
+    setTimeout(() => button.classList.remove("is-success"), 1400);
+  }
+
+  function fetchLastFillResultFromBackground() {
+    if (!chrome?.runtime?.sendMessage) {
+      return Promise.resolve(null);
+    }
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: "autoform_get_last_fill_result" }, (response) => {
+          if (chrome.runtime?.lastError) {
+            resolve(null);
+            return;
+          }
+          resolve(response?.result || null);
+        });
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  }
+
+  function applyStoredFillResultToManualStatus(result) {
+    if (!result || result.ok !== false) return;
+    const timestamp = typeof result.timestamp === "number" ? result.timestamp : null;
+    if (timestamp && Date.now() - timestamp > 5 * 60 * 1000) {
+      return;
+    }
+    handleManualFillErrorState({
+      code: result.code || null,
+      message: typeof result.message === "string" ? result.message : "",
+      quota: result.quota || null
+    });
+  }
+
   async function handleManualFill(btn) {
     btn.disabled = true;
-    setManualStatus("フォーム入力中…");
+    btn.dataset.loading = "1";
+    btn.classList.remove("is-success");
+    setManualStatus("");
     let resolvedQuota = null;
     try {
       const tabId = await getActiveTabId();
@@ -1175,56 +1699,63 @@
         return;
       }
       await enableAlwaysOnInjection();
-      const frameIds = await getAllFrameIds(tabId);
-      await ensureInjectedToFrames(tabId, frameIds);
-      const results = await Promise.all(
-        frameIds.map((frameId) =>
-          sendCommandToFrame(tabId, frameId, "autoform_manual_fill", null)
-        )
-      );
-      const fatalEntry = results.find((item) => item?.error && !item?.unreachable);
-      if (fatalEntry) {
-        if (!resolvedQuota && fatalEntry.quota && typeof fatalEntry.quota === "object") {
-          resolvedQuota = fatalEntry.quota;
+      const sendRecord =
+        currentSendContent && typeof currentSendContent === "object"
+          ? { ...DEFAULT_SEND_CONTENT, ...currentSendContent }
+          : DEFAULT_SEND_CONTENT;
+      const pageUrl = await getActiveTabUrl();
+      const response = await new Promise((resolve) => {
+        try {
+          chrome.runtime.sendMessage(
+              {
+                type: "autoform_manual_fill_all_frames",
+                payload: { sendRecord, pageUrl, source: "popup-manual", tabId }
+              },
+            (result) => {
+              if (chrome.runtime?.lastError) {
+                resolve({ error: chrome.runtime.lastError.message });
+                return;
+              }
+              resolve(result || {});
+            }
+          );
+        } catch (err) {
+          resolve({ error: err?.message || "manual_fill_failed" });
         }
-        if (isQuotaExhaustedError(fatalEntry.error, resolvedQuota || fatalEntry.quota)) {
-          setManualStatus("");
-        } else {
-          const errorMessage = fatalEntry.error || "入力に失敗しました";
-          setManualStatus(`失敗: ${errorMessage}`, true);
-        }
+      });
+      if (response?.error) {
+        resolvedQuota = response?.quota && typeof response.quota === "object" ? response.quota : null;
+        handleManualFillErrorState({
+          code: response?.code || null,
+          message: response.error || "",
+          quota: resolvedQuota
+        });
         return;
       }
-      const usableResults = results.filter((item) => !item?.unreachable);
-      if (!usableResults.length) {
+      resolvedQuota = response?.quota && typeof response.quota === "object" ? response.quota : null;
+      const summary = response?.summary;
+      if (!summary || typeof summary.success !== "number") {
+        setManualStatus("入力結果が取得できませんでした", true);
+        return;
+      }
+      if (summary.total === 0) {
         setManualStatus("入力可能なフレームが見つかりませんでした", true);
         return;
       }
-      const summary = usableResults.reduce(
-        (acc, res) => {
-          const applied = res?.applied || {};
-          acc.success += applied.success || res?.filled || 0;
-          acc.skipped += applied.skipped || 0;
-          acc.total += applied.total || 0;
-          if (!resolvedQuota && res?.quota && typeof res.quota === "object") {
-            resolvedQuota = res.quota;
-          }
-          return acc;
-        },
-        { success: 0, skipped: 0, total: 0 }
-      );
-      setManualStatus(`完了: ${summary.success}件に入力`);
+      setManualStatus("");
+      flashPrimaryButtonSuccess(btn);
     } catch (err) {
       if (!resolvedQuota && err?.quota && typeof err.quota === "object") {
         resolvedQuota = err.quota;
       }
-      if (isQuotaExhaustedError(err?.message, resolvedQuota || err?.quota)) {
-        setManualStatus("");
-      } else {
-        const fallback = err?.message || "入力に失敗しました";
-        setManualStatus(`失敗: ${fallback}`, true);
-      }
+      const quotaInfo = resolvedQuota || (err?.quota && typeof err.quota === "object" ? err.quota : null);
+      handleManualFillErrorState({
+        code: err?.code || null,
+        message: err?.message || "",
+        quota: quotaInfo
+      });
     } finally {
+      delete btn.dataset.loading;
       btn.disabled = false;
       await refreshDetectedInputCount();
       if (resolvedQuota) {
@@ -1329,13 +1860,16 @@
   });
 
   function initPopupDom() {
+    popupDomReady = true;
     applyApiKeyCardVisibility();
+    applyFloatingButtonEditionRules();
     const fillBtn = qs("fill-now");
+    const priorityRefreshBtn = qs("priority-refresh");
     const sendContentToggle = qs("send-content-toggle");
     const sendContentBody = qs("send-content-body");
     const saveSendBtn = qs("save-send-content");
     const floatingButtonCheckbox = qs("show-floating-button");
-    const saveApiKeyBtn = qs("save-api-key");
+    const saveApiKeyBtns = document.querySelectorAll("[data-api-key-save]");
 
     if (fillBtn) {
       fillNowButton = fillBtn;
@@ -1354,16 +1888,17 @@
     initSendContentToggle(sendContentToggle, sendContentBody, true);
     updateSendContentWarning();
     initFloatingButtonToggle(floatingButtonCheckbox);
-    initApiKeySaveHandler(saveApiKeyBtn);
+    saveApiKeyBtns.forEach((btn) => initApiKeySaveHandler(btn));
 
+    initPriorityRefreshButton(priorityRefreshBtn);
     renderPromoBlock();
-    if (runtimeConfig?.quota) {
-      applyQuotaToUI(runtimeConfig.quota);
-    }
     syncQuotaWithBackground();
     refreshDetectedInputCount();
     loadSendContent();
     loadApiKeyState();
+    fetchLastFillResultFromBackground()
+      .then((result) => applyStoredFillResultToManualStatus(result))
+      .catch(() => {});
   }
 
   document.addEventListener("DOMContentLoaded", () => {
