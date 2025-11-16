@@ -89,7 +89,7 @@
   let autoFillTriggered = false;
   let remoteFillPromise = null;
   let floatingButton = null;
-  let floatingButtonPreference = false;
+  let floatingButtonPreference = true;
   let floatingButtonShouldDisplay = false;
   let floatingButtonBusy = false;
   let floatingButtonInitScheduled = false;
@@ -1866,7 +1866,7 @@
   function init() {
     if (!chrome?.storage?.sync && !chrome?.storage?.local) {
       startAutoFill();
-      updateFloatingButtonVisibility(false);
+      updateFloatingButtonVisibility(true);
       return;
     }
 
@@ -1874,15 +1874,17 @@
       .then((snapshot) => {
         const hasMasterOverride = Object.prototype.hasOwnProperty.call(snapshot, STORAGE_KEY);
         const hasAutoRunOverride = Object.prototype.hasOwnProperty.call(snapshot, AUTO_RUN_STORAGE_KEY);
+        const hasFloatingButtonOverride = Object.prototype.hasOwnProperty.call(snapshot, FLOATING_BUTTON_STORAGE_KEY);
         masterEnabled = hasMasterOverride ? snapshot[STORAGE_KEY] !== false : true;
         autoRunOnOpen = hasAutoRunOverride ? snapshot[AUTO_RUN_STORAGE_KEY] === true : false;
-        updateFloatingButtonVisibility(snapshot?.[FLOATING_BUTTON_STORAGE_KEY] === true);
+        const floatingEnabled = hasFloatingButtonOverride ? snapshot[FLOATING_BUTTON_STORAGE_KEY] === true : true;
+        updateFloatingButtonVisibility(floatingEnabled);
         applyEditionStateFromApiKey(snapshot?.[API_KEY_STORAGE_KEY]);
       })
       .catch(() => {
         masterEnabled = true;
         autoRunOnOpen = false;
-        updateFloatingButtonVisibility(false);
+        updateFloatingButtonVisibility(true);
       })
       .finally(() => {
         updateAutoFillState();
@@ -1898,7 +1900,9 @@
         applyAutoRunState(changes[AUTO_RUN_STORAGE_KEY].newValue === true);
       }
       if (changes[FLOATING_BUTTON_STORAGE_KEY]) {
-        updateFloatingButtonVisibility(changes[FLOATING_BUTTON_STORAGE_KEY].newValue === true);
+        const nextValue = changes[FLOATING_BUTTON_STORAGE_KEY].newValue;
+        const enabled = nextValue === undefined ? true : nextValue === true;
+        updateFloatingButtonVisibility(enabled);
       }
       if (changes[API_KEY_STORAGE_KEY]) {
         applyEditionStateFromApiKey(changes[API_KEY_STORAGE_KEY].newValue);

@@ -1134,19 +1134,19 @@
     }
 
     const apply = (value) => {
-      const enabled = value === true;
+      const enabled = value !== false;
       checkbox.checked = enabled;
       if (!enabled) {
         setFloatingButtonStatus("");
       }
     };
 
+    apply(undefined);
+
     if (chrome?.storage?.sync) {
       chrome.storage.sync.get(FLOATING_BUTTON_STORAGE_KEY, (res) => {
-        apply(res?.[FLOATING_BUTTON_STORAGE_KEY] === true);
+        apply(res?.[FLOATING_BUTTON_STORAGE_KEY]);
       });
-    } else {
-      apply(false);
     }
 
     checkbox.addEventListener("change", () => {
