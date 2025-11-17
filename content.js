@@ -108,6 +108,9 @@
   let floatingPreviewHideTimer = null;
   let floatingPreviewRenderToken = 0;
   const floatingPreviewCopyTimers = new Map();
+  let ngMonitorInstance = null;
+  let ngMonitorReadyPromise = null;
+  let pendingNgContainer = null;
   let masterEnabled = true;
   let autoRunOnOpen = false;
   let lastReportedInputCount = null;
@@ -349,6 +352,53 @@
     notice.style.bottom = "16px";
     (document.body || document.documentElement).appendChild(notice);
     setTimeout(() => notice.remove(), 3200);
+  }
+
+  function ensureNgMonitorLoaded() {
+    if (ngMonitorReadyPromise) {
+      return ngMonitorReadyPromise;
+    }
+    if (!isTopFrame || !chrome?.runtime?.getURL) {
+      ngMonitorReadyPromise = Promise.resolve(null);
+      return ngMonitorReadyPromise;
+    }
+    const url = chrome.runtime.getURL("ng_monitor.js");
+    ngMonitorReadyPromise = import(url)
+      .then((mod) => {
+        const factory =
+          typeof mod.createNgWordMonitor === "function"
+            ? mod.createNgWordMonitor
+            : typeof mod.default === "function"
+            ? mod.default
+            : null;
+        if (!factory) {
+          console.warn("[AutoForm] NG word monitor module missing factory");
+          return null;
+        }
+        const instance = factory();
+        if (instance?.init) {
+          instance.init();
+        }
+        ngMonitorInstance = instance || null;
+        if (pendingNgContainer) {
+          instance?.setFloatingContainer(pendingNgContainer);
+        }
+        return instance;
+      })
+      .catch((err) => {
+        console.error("[AutoForm] NG word monitor failed to load", err);
+        return null;
+      });
+    return ngMonitorReadyPromise;
+  }
+
+  function updateNgMonitorContainer(container) {
+    pendingNgContainer = container || null;
+    ensureNgMonitorLoaded().then((monitor) => {
+      if (monitor?.setFloatingContainer) {
+        monitor.setFloatingContainer(container || null);
+      }
+    });
   }
 
   function ensureFloatingPreviewStyles() {
@@ -755,6 +805,7 @@
     }
   }
 
+
   function renderFloatingPreviewItems(record) {
     if (!floatingPreviewList) return;
     clearAllFloatingPreviewItemTimers();
@@ -873,6 +924,7 @@
       floatingButtonContainer.remove();
       floatingButtonContainer = null;
     }
+    updateNgMonitorContainer(null);
     floatingPreviewList = null;
     floatingPreviewEmptyEl = null;
     floatingPreviewVisible = false;
@@ -953,6 +1005,7 @@
     floatingButtonContainer = wrapper;
     floatingButton = btn;
     floatingPreviewToggle = toggle;
+    updateNgMonitorContainer(wrapper);
   }
 
   function updateFloatingButtonVisibility(enabled) {
@@ -1934,6 +1987,7 @@
     }
   }
 
+  ensureNgMonitorLoaded();
   init();
   scheduleInputCountReport({ immediate: true });
 })();
