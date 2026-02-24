@@ -1020,7 +1020,7 @@
 
   function initGoogleFormRefreshButton(button) {
     if (!button) return;
-    const defaultLabel = button.getAttribute("aria-label") || "Google Form URLを再検出";
+    const defaultLabel = button.getAttribute("aria-label") || "iframe form urlを再検出";
     const defaultTitle = button.getAttribute("title") || defaultLabel;
     const loadingLabel = `${defaultLabel}中`;
     const setLoading = (loading) => {
@@ -1734,6 +1734,43 @@
     });
   }
 
+  function getAllFrameInfos(tabId) {
+    return new Promise((resolve, reject) => {
+      if (!chrome?.webNavigation?.getAllFrames) {
+        reject(new Error("webNavigation API が利用できません"));
+        return;
+      }
+      chrome.webNavigation.getAllFrames({ tabId }, (frames) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(Array.isArray(frames) ? frames : []);
+      });
+    });
+  }
+
+  function isHttpOrHttpsUrl(url) {
+    if (typeof url !== "string") return false;
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isRecaptchaUrl(url) {
+    if (typeof url !== "string") return false;
+    return url.toLowerCase().includes("recaptcha");
+  }
+
+  function isBlockedIframeUrl(url) {
+    if (typeof url !== "string") return false;
+    const lower = url.toLowerCase();
+    return lower.includes("recaptcha") || lower.includes("challenges.cloudflare.com");
+  }
+
   function isIgnorableConnectionError(message) {
     if (!message || typeof message !== "string") return false;
     const lower = message.toLowerCase();
@@ -1767,7 +1804,7 @@
   }
 
   async function refreshGoogleFormUrls() {
-    setGoogleFormStatus("Google Form URLを検出中です…");
+    setGoogleFormStatus("iframe form urlを検出中です…");
     renderGoogleFormUrls([], { showEmpty: false });
     try {
       const tabId = await getActiveTabId();
@@ -1779,6 +1816,7 @@
       await enableAlwaysOnInjection();
       await injectContentScriptIntoTab(tabId);
       const frameIds = await getAllFrameIds(tabId);
+      const frameInfos = await getAllFrameInfos(tabId).catch(() => []);
       await ensureInjectedToFrames(tabId, frameIds);
       const results = await Promise.all(
         frameIds.map((frameId) => sendCommandToFrame(tabId, frameId, "autoform_request_google_form_urls"))
@@ -1790,21 +1828,27 @@
         res.urls.forEach((url) => {
           if (typeof url !== "string") return;
           const trimmed = url.trim();
-          if (trimmed) {
+          if (trimmed && !isBlockedIframeUrl(trimmed)) {
             urls.add(trimmed);
           }
         });
       });
+      frameInfos.forEach((frame) => {
+        if (!frame || frame.frameId === 0) return;
+        if (!isHttpOrHttpsUrl(frame.url)) return;
+        if (isBlockedIframeUrl(frame.url)) return;
+        urls.add(frame.url);
+      });
       const list = Array.from(urls);
       if (list.length) {
-        setGoogleFormStatus(`${list.length}件のGoogle Form URLを検出しました`);
+        setGoogleFormStatus(`${list.length}件のiframe form urlを検出しました`);
       } else {
-        setGoogleFormStatus("Google Form の URL が見つかりませんでした。");
+        setGoogleFormStatus("iframe form url が見つかりませんでした。");
       }
       renderGoogleFormUrls(list);
     } catch (err) {
       const message = err?.message || "不明なエラー";
-      setGoogleFormStatus(`Google Form URLの取得に失敗しました: ${message}`, true);
+      setGoogleFormStatus(`iframe form urlの取得に失敗しました: ${message}`, true);
       renderGoogleFormUrls([], { showEmpty: false });
     }
   }
