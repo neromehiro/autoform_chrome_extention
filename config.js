@@ -28,6 +28,10 @@
         showWhenRemainingAtMost: null
       }
     },
+    iframePermissionOrigins: [
+      "https://*.hsforms.net/*",
+      "https://forms.hubspot.com/*"
+    ],
     quota: null,
     promoBlockText: ""
   };

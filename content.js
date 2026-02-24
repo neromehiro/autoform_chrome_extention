@@ -5,6 +5,14 @@
 (() => {
   const GLOBAL_FLAG_KEY = "__autoformContentScriptLoaded";
   const globalScope = typeof window !== "undefined" ? window : globalThis;
+  const BLOCKED_HOSTS = ["aimsales.online"];
+
+  // Disable the extension on specific domains (e.g., aimsales.online).
+  const hostname = globalScope?.location?.hostname || "";
+  if (BLOCKED_HOSTS.some((blocked) => hostname === blocked || hostname.endsWith(`.${blocked}`))) {
+    return;
+  }
+
   if (globalScope[GLOBAL_FLAG_KEY]) {
     return;
   }
@@ -26,7 +34,8 @@
     "autoform_count_inputs",
     "autoform_count_forms",
     "autoform_apply_send_content",
-    "autoform_request_input_count"
+    "autoform_request_input_count",
+    "autoform_request_google_form_urls"
   ]);
   const SEND_CONTENT_STORAGE_KEY = "autoformSendContent";
   const FLOATING_BUTTON_STORAGE_KEY = "autoformShowFloatingButton";
@@ -79,7 +88,10 @@
   const FLOATING_PREVIEW_STYLE_ID = "autoform-floating-preview-style";
   const FLOATING_PREVIEW_HIDE_DELAY_MS = 120;
   const FLOATING_PREVIEW_VALUE_MAX_LENGTH = 60;
+  const NG_ALERT_CONTAINER_ID = "autoform-ng-alert-container";
+  const NG_ALERT_CONTAINER_STYLE_ID = "autoform-ng-alert-container-style";
   const SETTINGS_STORAGE_KEYS = [STORAGE_KEY, AUTO_RUN_STORAGE_KEY, FLOATING_BUTTON_STORAGE_KEY, API_KEY_STORAGE_KEY];
+  const GOOGLE_FORM_URL_REGEX = /https?:\/\/(?:docs\.google\.com\/forms\/d\/(?:e\/)?[A-Za-z0-9_-]+\/viewform(?:\?[^"'\\s<>]*)?|forms\.gle\/[A-Za-z0-9_-]+)/gi;
 
   const isTopFrame = window.top === window.self;
   let detectionNoticeShown = false;
@@ -111,6 +123,7 @@
   let ngMonitorInstance = null;
   let ngMonitorReadyPromise = null;
   let pendingNgContainer = null;
+  let ngAlertContainer = null;
   let masterEnabled = true;
   let autoRunOnOpen = false;
   let lastReportedInputCount = null;
@@ -399,6 +412,50 @@
         monitor.setFloatingContainer(container || null);
       }
     });
+  }
+
+  function ensureNgAlertContainerStyles() {
+    if (document.getElementById(NG_ALERT_CONTAINER_STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = NG_ALERT_CONTAINER_STYLE_ID;
+    style.textContent = `
+.autoform-ng-alert-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2147483646;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  pointer-events: none;
+}
+.autoform-ng-alert-container .autoform-ng-alert {
+  pointer-events: auto;
+}
+`;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function ensureNgAlertContainer() {
+    if (!isTopFrame) return null;
+    if (ngAlertContainer && ngAlertContainer.isConnected) {
+      return ngAlertContainer;
+    }
+    const existing = document.getElementById(NG_ALERT_CONTAINER_ID);
+    if (existing) {
+      ngAlertContainer = existing;
+      return ngAlertContainer;
+    }
+    if (!document.body && !document.documentElement) return null;
+    ensureNgAlertContainerStyles();
+    const container = document.createElement("div");
+    container.id = NG_ALERT_CONTAINER_ID;
+    container.className = "autoform-ng-alert-container";
+    (document.body || document.documentElement).appendChild(container);
+    ngAlertContainer = container;
+    return ngAlertContainer;
   }
 
   function ensureFloatingPreviewStyles() {
@@ -924,7 +981,11 @@
       floatingButtonContainer.remove();
       floatingButtonContainer = null;
     }
-    updateNgMonitorContainer(null);
+    if (masterEnabled) {
+      updateNgMonitorContainer(ensureNgAlertContainer());
+    } else {
+      updateNgMonitorContainer(null);
+    }
     floatingPreviewList = null;
     floatingPreviewEmptyEl = null;
     floatingPreviewVisible = false;
@@ -1178,10 +1239,19 @@
     }
     return new Promise((resolve) => {
       try {
-        chrome.storage.local.get(SEND_CONTENT_STORAGE_KEY, (res) => {
+        chrome.storage.local.get(["autoformSendPresets", SEND_CONTENT_STORAGE_KEY], (res) => {
           if (chrome.runtime?.lastError) {
             resolve(fallback());
             return;
+          }
+          const presets = res?.autoformSendPresets;
+          if (presets?.presets && typeof presets.presets === "object") {
+            const active =
+              presets.presets[presets.activeId] || Object.values(presets.presets)[0];
+            if (active?.data && typeof active.data === "object" && !Array.isArray(active.data)) {
+              resolve({ ...DEFAULT_SEND_RECORD, ...active.data });
+              return;
+            }
           }
           const stored = res?.[SEND_CONTENT_STORAGE_KEY];
           if (stored && typeof stored === "object" && !Array.isArray(stored)) {
@@ -1524,6 +1594,88 @@
     }
   }
 
+  function normalizeGoogleFormUrl(value) {
+    if (!value || typeof value !== "string") return null;
+    let url = value.trim();
+    if (!url) return null;
+    url = url.replace(/\\u0026/g, "&").replace(/&amp;/g, "&").replace(/\\\//g, "/");
+    url = url.replace(/^[("'<>\\[]+/, "").replace(/[)"'<>\\]\\s]+$/g, "");
+    if (!/^https?:\/\//i.test(url)) return null;
+    try {
+      const parsed = new URL(url);
+      const isDocs = parsed.hostname === "docs.google.com";
+      const isGoogleForm =
+        isDocs &&
+        /^\/forms\/d\/(?:e\/)?[A-Za-z0-9_-]+\/viewform$/i.test(parsed.pathname);
+      if (isGoogleForm) {
+        parsed.search = "";
+        parsed.hash = "";
+        return parsed.toString();
+      }
+    } catch (_) {
+      // ignore URL parsing failures
+    }
+    return url;
+  }
+
+  function collectGoogleFormUrls() {
+    const urls = new Set();
+    const addUrl = (candidate) => {
+      const normalized = normalizeGoogleFormUrl(candidate);
+      if (normalized) {
+        urls.add(normalized);
+      }
+    };
+    const addFromText = (text) => {
+      if (!text || typeof text !== "string") return;
+      const normalizedText = text.replace(/\\\//g, "/").replace(/\\u0026/g, "&");
+      const matches = normalizedText.matchAll(GOOGLE_FORM_URL_REGEX);
+      for (const match of matches) {
+        addUrl(match[0]);
+      }
+    };
+
+    document.querySelectorAll("script").forEach((script) => {
+      if (script.textContent) {
+        addFromText(script.textContent);
+      }
+      if (script.src) {
+        addFromText(script.src);
+      }
+    });
+
+    const attrCandidates = [
+      "src",
+      "href",
+      "data",
+      "data-src",
+      "data-href",
+      "data-url",
+      "data-form",
+      "data-embed",
+      "data-iframe",
+      "data-form-url",
+      "data-embed-url",
+      "action"
+    ];
+    const attrSelector = attrCandidates.map((attr) => `[${attr}]`).join(",");
+    document.querySelectorAll(attrSelector).forEach((el) => {
+      attrCandidates.forEach((attr) => {
+        if (!el.hasAttribute(attr)) return;
+        const value = el.getAttribute(attr);
+        if (value) {
+          addFromText(value);
+        }
+      });
+    });
+
+    if (!urls.size) {
+      addFromText(document.documentElement?.innerHTML || "");
+    }
+
+    return Array.from(urls);
+  }
+
   function dispatchInputCount(count) {
     if (!chrome?.runtime?.sendMessage) return;
     try {
@@ -1846,6 +1998,9 @@
       const count = reportInputCountNow();
       return { count };
     }
+    if (command === "autoform_request_google_form_urls") {
+      return { urls: collectGoogleFormUrls() };
+    }
     return null;
   }
 
@@ -1923,6 +2078,14 @@
       return;
     }
 
+    const initNgContainer = () => {
+      if (!masterEnabled) return;
+      const container = ensureNgAlertContainer();
+      if (container) {
+        updateNgMonitorContainer(container);
+      }
+    };
+
     loadSettingsSnapshot(SETTINGS_STORAGE_KEYS)
       .then((snapshot) => {
         const hasMasterOverride = Object.prototype.hasOwnProperty.call(snapshot, STORAGE_KEY);
@@ -1942,6 +2105,11 @@
       .finally(() => {
         updateAutoFillState();
         refreshEditionStateFromBackground().catch(() => {});
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", initNgContainer, { once: true });
+        } else {
+          initNgContainer();
+        }
       });
 
     chrome.storage.onChanged.addListener((changes, area) => {

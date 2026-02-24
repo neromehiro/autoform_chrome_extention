@@ -342,6 +342,51 @@
       .plan-tag.is-paid {
         color: #059669;
       }
+      .google-form-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .google-form-title {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 700;
+        color: #334155;
+      }
+      .google-form-list {
+        list-style: none;
+        margin: 8px 0 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .google-form-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: rgba(148, 163, 184, 0.12);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+      }
+      .google-form-item-label {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #64748b;
+      }
+      .google-form-link {
+        font-size: 12px;
+        word-break: break-all;
+      }
+      .google-form-empty {
+        margin: 6px 0 0;
+        font-size: 12px;
+        color: #94a3b8;
+      }
       .ios-switch {
         position: relative;
         display: inline-flex;
@@ -722,6 +767,46 @@
         box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
         outline: none;
       }
+      .send-preset-bar {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+        margin-top: 4px;
+      }
+      .send-preset-select {
+        min-width: 160px;
+        flex: 1;
+      }
+      .send-preset-actions {
+        display: flex;
+        gap: 6px;
+        align-self: flex-end;
+        margin-left: auto;
+      }
+      .send-preset-actions .ghost-btn {
+        padding: 6px 8px;
+        white-space: nowrap;
+        font-size: 11px;
+        line-height: 1.2;
+        color: #6b7280;
+        border: 1px solid #e2e8f0;
+        background: #f8fafc;
+        box-shadow: none;
+        transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+      }
+      .send-preset-actions .ghost-btn:hover {
+        color: #475569;
+        border-color: #cbd5e1;
+        background: #eef2ff;
+      }
+      .send-preset-actions .ghost-btn:focus-visible {
+        outline: 2px solid rgba(59, 130, 246, 0.35);
+        outline-offset: 2px;
+      }
+      .send-preset-name-row {
+        margin-top: 8px;
+      }
       .send-content-body.collapsed {
         display: none;
       }
@@ -938,6 +1023,24 @@
       </div>
     </div>
 
+    <div class="surface-card" id="google-form-card">
+      <div class="google-form-header">
+        <p class="google-form-title">Google Form URL</p>
+        <button
+          type="button"
+          class="priority-refresh-btn"
+          id="google-form-refresh"
+          aria-label="Google Form URLを再検出"
+          title="Google Form URLを再検出"
+        >
+          <span class="priority-refresh-btn-icon" aria-hidden="true">↻</span>
+        </button>
+      </div>
+      <p id="google-form-status" class="status-text" aria-live="polite"></p>
+      <ul id="google-form-list" class="google-form-list" aria-live="polite"></ul>
+      <p id="google-form-empty" class="google-form-empty" style="display:none;">Google Form の URL が見つかりませんでした。</p>
+    </div>
+
     <div class="surface-card ad-feed-card" id="dynamic-info-card" data-block="promo" style="display:none;">
       <div class="ad-section-header">
         <div class="ad-section-title">
@@ -971,6 +1074,31 @@
         <p id="send-content-warning" class="status-text error" style="display:none;margin-top:0;">
           全ての入力項目を埋めてください
         </p>
+        <div class="send-preset-bar">
+          <div style="flex:1;min-width:180px;">
+            <label class="send-field-label" for="send-preset-select">プリセット</label>
+            <select
+              class="send-field-input send-preset-select"
+              id="send-preset-select"
+              aria-label="入力内容プリセットを選択"
+            ></select>
+          </div>
+          <div class="send-preset-actions">
+            <button type="button" class="ghost-btn" id="send-preset-new">新規</button>
+            <button type="button" class="ghost-btn" id="send-preset-duplicate">複製</button>
+            <button type="button" class="ghost-btn" id="send-preset-delete">削除</button>
+          </div>
+        </div>
+        <div class="send-field send-preset-name-row">
+          <label class="send-field-label" for="send-preset-name">プリセット名</label>
+          <input
+            class="send-field-input"
+            id="send-preset-name"
+            type="text"
+            placeholder="例: プリセット1"
+            autocomplete="off"
+          />
+        </div>
         <div class="send-field-group">
           <div class="send-field">
             <label class="send-field-label" for="send-field-name">お名前（姓名の間に半角スペース）</label>

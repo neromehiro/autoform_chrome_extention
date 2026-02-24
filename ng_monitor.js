@@ -10,6 +10,7 @@ const NG_RULES = [
   { category: "B", words: ["受け付けておりません", "お断り", "ご遠慮", "固く", "然るべき措置", "ご遠慮ください"] },
   { category: "C", words: ["対応手数料", "対応費"] }
 ];
+const EXCLUDED_PHRASES = ["営業日","営業時間"]; // Allow "営業日" without triggering the "営業" rule
 
 const CATEGORY_PRIORITY = ["C", "B", "A"];
 const DANGER_LABEL = {
@@ -340,8 +341,18 @@ function detectWords(text) {
   const hits = [];
   NG_RULES.forEach(({ category, words }) => {
     words.forEach((word) => {
-      if (word && text.includes(word)) {
-        hits.push({ category, word });
+      if (!word) return;
+      let startIndex = 0;
+      while (startIndex < text.length) {
+        const index = text.indexOf(word, startIndex);
+        if (index === -1) break;
+        const isExcluded =
+          word === "営業" && EXCLUDED_PHRASES.some((phrase) => text.startsWith(phrase, index));
+        if (!isExcluded) {
+          hits.push({ category, word });
+          break;
+        }
+        startIndex = index + word.length;
       }
     });
   });

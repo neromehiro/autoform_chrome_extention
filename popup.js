@@ -1,6 +1,7 @@
 (() => {
   const DATA_KEY = "autoformImportedJson";
   const SEND_STORAGE_KEY = "autoformSendContent";
+  const SEND_PRESET_STORAGE_KEY = "autoformSendPresets";
   const FLOATING_BUTTON_STORAGE_KEY = "autoformShowFloatingButton";
   const AUTO_BUTTON_STORAGE_KEY = "autoformShowAutoButton";
   const API_KEY_STORAGE_KEY = "aimsalesApiKey";
@@ -114,6 +115,11 @@
 
   let currentData = null;
   let currentSendContent = null;
+  let currentSendPresetId = "preset-1";
+  let sendPresets = {
+    activeId: "preset-1",
+    presets: { "preset-1": { name: "プリセット1", data: DEFAULT_SEND_CONTENT } }
+  };
   let currentApiKey = "";
   const AUTO_SAVE_DEBOUNCE_MS = 800;
   let autoSaveTimerId = null;
@@ -269,6 +275,60 @@
       countEl.textContent = message;
       countEl.classList.toggle("error", Boolean(isError));
     }
+  }
+
+  function setGoogleFormStatus(message, isError = false) {
+    const statusEl = qs("google-form-status");
+    if (!statusEl) return;
+    const hasMessage = Boolean(message);
+    statusEl.textContent = hasMessage ? message : "";
+    statusEl.classList.toggle("error", Boolean(isError && hasMessage));
+    statusEl.style.color = hasMessage ? (isError ? "#b91c1c" : "#64748b") : "";
+    statusEl.hidden = !hasMessage;
+  }
+
+  function normalizeGoogleFormUrlList(urls) {
+    if (!Array.isArray(urls)) return [];
+    const unique = new Set();
+    urls.forEach((url) => {
+      if (typeof url !== "string") return;
+      const trimmed = url.trim();
+      if (!trimmed) return;
+      unique.add(trimmed);
+    });
+    return Array.from(unique);
+  }
+
+  function renderGoogleFormUrls(urls, options = {}) {
+    const listEl = qs("google-form-list");
+    const emptyEl = qs("google-form-empty");
+    if (!listEl || !emptyEl) return;
+    listEl.innerHTML = "";
+    const normalized = normalizeGoogleFormUrlList(urls);
+    if (!normalized.length) {
+      emptyEl.style.display = options.showEmpty === false ? "none" : "block";
+      return;
+    }
+    emptyEl.style.display = "none";
+    normalized.forEach((url, index) => {
+      const item = document.createElement("li");
+      item.className = "google-form-item";
+
+      const label = document.createElement("span");
+      label.className = "google-form-item-label";
+      label.textContent = `URL ${index + 1}`;
+
+      const link = document.createElement("a");
+      link.className = "google-form-link";
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noreferrer noopener";
+      link.textContent = url;
+
+      item.appendChild(label);
+      item.appendChild(link);
+      listEl.appendChild(item);
+    });
   }
 
   function setSendContentStatus(message, isError = false) {
@@ -958,6 +1018,31 @@
     });
   }
 
+  function initGoogleFormRefreshButton(button) {
+    if (!button) return;
+    const defaultLabel = button.getAttribute("aria-label") || "Google Form URLを再検出";
+    const defaultTitle = button.getAttribute("title") || defaultLabel;
+    const loadingLabel = `${defaultLabel}中`;
+    const setLoading = (loading) => {
+      button.disabled = loading;
+      button.dataset.loading = loading ? "1" : "0";
+      button.setAttribute("aria-busy", loading ? "true" : "false");
+      button.setAttribute("aria-label", loading ? loadingLabel : defaultLabel);
+      button.setAttribute("title", loading ? loadingLabel : defaultTitle);
+    };
+    button.addEventListener("click", () => {
+      if (button.dataset.loading === "1") return;
+      setLoading(true);
+      refreshGoogleFormUrls()
+        .catch((err) => {
+          console.error("[AutoForm] google form refresh failed", err);
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    });
+  }
+
   function initPriorityDetails(container) {
     const root = container || document;
     root.querySelectorAll("[data-priority-details-toggle]").forEach((toggle) => {
@@ -1307,6 +1392,123 @@
     chrome.storage.local.set({ [DATA_KEY]: currentData });
   }
 
+  function getPresetDisplayName(preset, fallbackIndex = 1) {
+    if (preset?.name && typeof preset.name === "string" && preset.name.trim()) {
+      return preset.name.trim();
+    }
+    return `プリセット${fallbackIndex}`;
+  }
+
+  function getNextPresetName() {
+    const names = Object.values(sendPresets?.presets || {}).map((p) => p?.name || "");
+    const usedNumbers = names
+      .map((name) => {
+        const match = String(name).match(/プリセット\s*(\d+)/);
+        return match ? Number(match[1]) : null;
+      })
+      .filter((n) => Number.isFinite(n));
+    let next = names.length + 1;
+    if (usedNumbers.length) {
+      next = Math.max(...usedNumbers) + 1;
+    }
+    return `プリセット${next}`;
+  }
+
+  function normalizeSendPresets(rawPresets, legacyContent) {
+    const defaultPresetId = "preset-1";
+    const defaultPreset = { name: "プリセット1", data: DEFAULT_SEND_CONTENT };
+    if (rawPresets?.presets && typeof rawPresets.presets === "object") {
+      const valid = {};
+      let index = 1;
+      Object.entries(rawPresets.presets).forEach(([id, preset]) => {
+        if (!preset || typeof preset !== "object" || Array.isArray(preset)) return;
+        if (!preset.data || typeof preset.data !== "object" || Array.isArray(preset.data)) return;
+        const name = getPresetDisplayName(preset, index);
+        valid[id] = { name, data: { ...DEFAULT_SEND_CONTENT, ...preset.data } };
+        index += 1;
+      });
+      const validIds = Object.keys(valid);
+      if (validIds.length) {
+        const activeId =
+          rawPresets.activeId && valid[rawPresets.activeId] ? rawPresets.activeId : validIds[0];
+        return { activeId, presets: valid };
+      }
+    }
+    if (legacyContent && typeof legacyContent === "object" && !Array.isArray(legacyContent)) {
+      return {
+        activeId: defaultPresetId,
+        presets: {
+          [defaultPresetId]: {
+            name: defaultPreset.name,
+            data: { ...DEFAULT_SEND_CONTENT, ...legacyContent }
+          }
+        }
+      };
+    }
+    return { activeId: defaultPresetId, presets: { [defaultPresetId]: defaultPreset } };
+  }
+
+  function renderSendPresetSelect() {
+    const select = document.getElementById("send-preset-select");
+    if (!select) return;
+    select.innerHTML = "";
+    const entries = Object.entries(sendPresets.presets);
+    entries.forEach(([id, preset], idx) => {
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = getPresetDisplayName(preset, idx + 1);
+      if (id === sendPresets.activeId) {
+        option.selected = true;
+      }
+      select.appendChild(option);
+    });
+  }
+
+  function applyPresetNameToInput() {
+    const input = document.getElementById("send-preset-name");
+    if (!input) return;
+    const preset = sendPresets.presets[currentSendPresetId];
+    input.value = getPresetDisplayName(preset, 1);
+  }
+
+  function switchSendPreset(nextId) {
+    if (!sendPresets.presets[nextId]) return;
+    flushAutoSave({ force: true });
+    sendPresets.activeId = nextId;
+    currentSendPresetId = nextId;
+    currentSendContent = sendPresets.presets[nextId].data || DEFAULT_SEND_CONTENT;
+    applySendContentToForm(currentSendContent);
+    applyPresetNameToInput();
+    lastAutoSavedSnapshot = serializeSendContent(currentSendContent);
+    renderSendPresetSelect();
+    setSendContentStatus(`${getPresetDisplayName(sendPresets.presets[nextId])} を読み込みました`);
+    updateSendContentWarning(currentSendContent);
+    persistSendContent();
+  }
+
+  function createSendPreset(baseData = null) {
+    flushAutoSave({ force: true });
+    const id = `preset-${Date.now()}`;
+    const name = getNextPresetName();
+    const presetData = baseData && typeof baseData === "object" ? baseData : currentSendContent || DEFAULT_SEND_CONTENT;
+    sendPresets.presets[id] = { name, data: { ...DEFAULT_SEND_CONTENT, ...presetData } };
+    switchSendPreset(id);
+  }
+
+  function deleteSendPreset(id) {
+    if (!sendPresets.presets[id]) return;
+    const keys = Object.keys(sendPresets.presets);
+    if (keys.length <= 1) {
+      setSendContentStatus("最後のプリセットは削除できません", true);
+      return;
+    }
+    delete sendPresets.presets[id];
+    const nextActive = sendPresets.presets[sendPresets.activeId]
+      ? sendPresets.activeId
+      : Object.keys(sendPresets.presets)[0];
+    switchSendPreset(nextActive);
+  }
+
   function getSendContentFields() {
     return Array.from(document.querySelectorAll("[data-send-field]"));
   }
@@ -1339,30 +1541,59 @@
   function loadSendContent() {
     if (!chrome?.storage?.local) {
       currentSendContent = DEFAULT_SEND_CONTENT;
+      sendPresets = {
+        activeId: "preset-1",
+        presets: { "preset-1": { name: "プリセット1", data: DEFAULT_SEND_CONTENT } }
+      };
+      currentSendPresetId = "preset-1";
+      renderSendPresetSelect();
+      applyPresetNameToInput();
       applySendContentToForm(currentSendContent);
       lastAutoSavedSnapshot = serializeSendContent(currentSendContent);
       setSendContentStatus("storage が利用できません (初期値のみ)", true);
       updateSendContentWarning(currentSendContent);
       return;
     }
-    chrome.storage.local.get(SEND_STORAGE_KEY, (res) => {
-      const stored = res?.[SEND_STORAGE_KEY];
-      if (stored && typeof stored === "object" && !Array.isArray(stored)) {
-        currentSendContent = stored;
-        setSendContentStatus("保存済みの内容を読み込みました");
-      } else {
-        currentSendContent = DEFAULT_SEND_CONTENT;
-        setSendContentStatus("初期 SEND_CONTENT を読み込みました");
-      }
+    chrome.storage.local.get([SEND_PRESET_STORAGE_KEY, SEND_STORAGE_KEY], (res) => {
+      const rawPresets = res?.[SEND_PRESET_STORAGE_KEY];
+      const legacyContent = res?.[SEND_STORAGE_KEY];
+      const normalized = normalizeSendPresets(rawPresets, legacyContent);
+      sendPresets = normalized;
+      currentSendPresetId = normalized.activeId;
+      currentSendContent =
+        normalized.presets[normalized.activeId]?.data || DEFAULT_SEND_CONTENT;
+      renderSendPresetSelect();
+      applyPresetNameToInput();
       applySendContentToForm(currentSendContent);
       lastAutoSavedSnapshot = serializeSendContent(currentSendContent);
+      setSendContentStatus("保存済みのプリセットを読み込みました");
       updateSendContentWarning(currentSendContent);
+      persistSendContent();
     });
   }
 
   function persistSendContent() {
     if (!chrome?.storage?.local || !currentSendContent) return;
-    chrome.storage.local.set({ [SEND_STORAGE_KEY]: currentSendContent });
+    const presetEntry = sendPresets.presets[currentSendPresetId] || {
+      name: getPresetDisplayName(null, 1),
+      data: DEFAULT_SEND_CONTENT
+    };
+    const nextPresets = {
+      ...sendPresets,
+      activeId: currentSendPresetId,
+      presets: {
+        ...sendPresets.presets,
+        [currentSendPresetId]: {
+          name: presetEntry.name,
+          data: currentSendContent
+        }
+      }
+    };
+    sendPresets = nextPresets;
+    chrome.storage.local.set({
+      [SEND_PRESET_STORAGE_KEY]: nextPresets,
+      [SEND_STORAGE_KEY]: currentSendContent
+    });
   }
 
   function serializeSendContent(data) {
@@ -1533,6 +1764,49 @@
         }
       );
     });
+  }
+
+  async function refreshGoogleFormUrls() {
+    setGoogleFormStatus("Google Form URLを検出中です…");
+    renderGoogleFormUrls([], { showEmpty: false });
+    try {
+      const tabId = await getActiveTabId();
+      const granted = await ensureAllUrlsPermission();
+      if (!granted) {
+        setGoogleFormStatus("全サイトへのアクセス許可が必要です。ボタンを押して許可してください。", true);
+        return;
+      }
+      await enableAlwaysOnInjection();
+      await injectContentScriptIntoTab(tabId);
+      const frameIds = await getAllFrameIds(tabId);
+      await ensureInjectedToFrames(tabId, frameIds);
+      const results = await Promise.all(
+        frameIds.map((frameId) => sendCommandToFrame(tabId, frameId, "autoform_request_google_form_urls"))
+      );
+      const urls = new Set();
+      results.forEach((res) => {
+        if (res?.unreachable) return;
+        if (!Array.isArray(res?.urls)) return;
+        res.urls.forEach((url) => {
+          if (typeof url !== "string") return;
+          const trimmed = url.trim();
+          if (trimmed) {
+            urls.add(trimmed);
+          }
+        });
+      });
+      const list = Array.from(urls);
+      if (list.length) {
+        setGoogleFormStatus(`${list.length}件のGoogle Form URLを検出しました`);
+      } else {
+        setGoogleFormStatus("Google Form の URL が見つかりませんでした。");
+      }
+      renderGoogleFormUrls(list);
+    } catch (err) {
+      const message = err?.message || "不明なエラー";
+      setGoogleFormStatus(`Google Form URLの取得に失敗しました: ${message}`, true);
+      renderGoogleFormUrls([], { showEmpty: false });
+    }
   }
 
   async function refreshDetectedInputCount() {
@@ -1765,7 +2039,8 @@
     currentSendContent = formData;
     persistSendContent();
     lastAutoSavedSnapshot = serializeSendContent(currentSendContent);
-    setSendContentStatus("入力項目を保存しました");
+    const preset = sendPresets.presets[currentSendPresetId];
+    setSendContentStatus(`${getPresetDisplayName(preset)} を保存しました`);
     updateSendContentWarning(formData);
   }
 
@@ -1826,9 +2101,15 @@
     applyFloatingButtonEditionRules();
     const fillBtn = qs("fill-now");
     const priorityRefreshBtn = qs("priority-refresh");
+    const googleFormRefreshBtn = qs("google-form-refresh");
     const sendContentToggle = qs("send-content-toggle");
     const sendContentBody = qs("send-content-body");
     const saveSendBtn = qs("save-send-content");
+    const sendPresetSelect = document.getElementById("send-preset-select");
+    const sendPresetNameInput = document.getElementById("send-preset-name");
+    const newPresetBtn = document.getElementById("send-preset-new");
+    const duplicatePresetBtn = document.getElementById("send-preset-duplicate");
+    const deletePresetBtn = document.getElementById("send-preset-delete");
     const floatingButtonCheckbox = qs("show-floating-button");
     const saveApiKeyBtns = document.querySelectorAll("[data-api-key-save]");
 
@@ -1846,15 +2127,50 @@
     if (saveSendBtn) {
       saveSendBtn.addEventListener("click", handleSendContentSave);
     }
+    if (sendPresetSelect) {
+      sendPresetSelect.addEventListener("change", (e) => switchSendPreset(e.target.value));
+    }
+    if (sendPresetNameInput) {
+      sendPresetNameInput.addEventListener("blur", (e) => {
+        const preset = sendPresets.presets[currentSendPresetId];
+        if (!preset) return;
+        const fallbackName = getPresetDisplayName(
+          sendPresets.presets[currentSendPresetId],
+          Object.keys(sendPresets.presets || {}).length || 1
+        );
+        const nextName = e.target.value.trim() || fallbackName;
+        sendPresets.presets[currentSendPresetId] = { ...preset, name: nextName };
+        applyPresetNameToInput();
+        renderSendPresetSelect();
+        persistSendContent();
+      });
+      sendPresetNameInput.addEventListener("input", () => {
+        setSendContentStatus("未保存の変更があります");
+      });
+    }
+    if (newPresetBtn) {
+      newPresetBtn.addEventListener("click", () => createSendPreset(DEFAULT_SEND_CONTENT));
+    }
+    if (duplicatePresetBtn) {
+      duplicatePresetBtn.addEventListener("click", () => {
+        const active = sendPresets.presets[currentSendPresetId];
+        createSendPreset(active?.data || currentSendContent);
+      });
+    }
+    if (deletePresetBtn) {
+      deletePresetBtn.addEventListener("click", () => deleteSendPreset(currentSendPresetId));
+    }
     initSendContentToggle(sendContentToggle, sendContentBody, true);
     updateSendContentWarning();
     initFloatingButtonToggle(floatingButtonCheckbox);
     saveApiKeyBtns.forEach((btn) => initApiKeySaveHandler(btn));
 
     initPriorityRefreshButton(priorityRefreshBtn);
+    initGoogleFormRefreshButton(googleFormRefreshBtn);
     renderPromoBlock();
     syncQuotaWithBackground();
     refreshDetectedInputCount();
+    refreshGoogleFormUrls();
     loadSendContent();
     loadApiKeyState();
     fetchLastFillResultFromBackground()
